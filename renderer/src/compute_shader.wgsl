@@ -28,6 +28,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 fn reflection_demo(uv: vec2f) -> vec4<f32> {
-    let fragColor = vec4f(uv.x, uv.y, 1., 1.);
+    let fragColor = vec4f(uv.x, uv.y, 0., 1.);
     return fragColor;
 }

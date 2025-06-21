@@ -6,10 +6,10 @@ fn sum_as_string(a: usize, b: usize) -> PyResult<String> {
     Ok((a + b).to_string())
 }
 
-/// Formats the sum of two numbers as string.
+/// Renders the result from python
 #[pyfunction]
-fn render_with_wgsl(a: usize, b: usize) -> PyResult<()> {
-    Ok(render())
+fn render_with_wgsl(shader: &str) -> PyResult<()> {
+    Ok(render(shader.to_string()))
 }
 
 /// A Python module implemented in Rust.cl
@@ -20,27 +20,23 @@ fn renderer(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-
-
 //////// Renderer stuff
 
-use std::fs;
 use std::time::Instant;
+use std::{thread, time};
 use wgpu::util::DeviceExt;
 use wgpu::Adapter;
-use std::{thread, time};
 
 const GRID_SIZE: u32 = 16;
 const RESOLUTION: u32 = 1024;
 const FRAMES: u32 = 1;
 
-pub fn render() {
-
+pub fn render(shader: String) {
     let time = time::Duration::from_millis(3);
     println!("STARTING");
     thread::sleep(time);
 
-    pollster::block_on(run());
+    pollster::block_on(run(shader));
 }
 
 pub struct ComputeState {
@@ -55,7 +51,7 @@ pub struct ComputeState {
 }
 
 impl ComputeState {
-    async fn new(adapter: Adapter) -> ComputeState {
+    async fn new(adapter: Adapter, shader: String) -> ComputeState {
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
@@ -71,12 +67,16 @@ impl ComputeState {
 
         let compute_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Compute Shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                fs::read_to_string("src/compute_shader.wgsl")
-                    .expect("Could not load shader")
-                    .into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shader.into()),
         });
+        // let compute_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        //     label: Some("Compute Shader"),
+        //     source: wgpu::ShaderSource::Wgsl(
+        //         fs::read_to_string("src/compute_shader.wgsl")
+        //             .expect("Could not load shader")
+        //             .into(),
+        //     ),
+        // });
 
         let output_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Compute Output Texture"),
@@ -97,10 +97,7 @@ impl ComputeState {
 
         let size_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Resolution Buffer"),
-            contents: bytemuck::cast_slice(&[
-                RESOLUTION,
-                RESOLUTION,
-            ]),
+            contents: bytemuck::cast_slice(&[RESOLUTION, RESOLUTION]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
@@ -212,7 +209,7 @@ impl ComputeState {
         }
     }
 
-    fn update(&mut self) -> f32{
+    fn update(&mut self) -> f32 {
         let fps = self.fps();
 
         self.time[0] += 1;
@@ -265,12 +262,8 @@ impl ComputeState {
         }
         // Save to an image
         use image::{ImageBuffer, Rgba};
-        let image = ImageBuffer::<Rgba<u8>, _>::from_raw(
-            RESOLUTION,
-            RESOLUTION,
-            rgba_u8_data,
-        )
-        .expect("Failed to create image buffer");
+        let image = ImageBuffer::<Rgba<u8>, _>::from_raw(RESOLUTION, RESOLUTION, rgba_u8_data)
+            .expect("Failed to create image buffer");
         image.save(output_file).expect("Failed to save image");
 
         // Unmap the buffer
@@ -318,30 +311,18 @@ impl ComputeState {
     }
 }
 
-pub async fn run() {
-
+pub async fn run(shader: String) {
     let instance = wgpu::Instance::default();
 
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions::default())
         .await
         .unwrap();
-    let mut compute_state = ComputeState::new(adapter).await;
+    let mut compute_state = ComputeState::new(adapter, shader).await;
+    compute_state.render();
 
-    let mut debug_count = 0;
-
-    for _ in 0..FRAMES {
-        let fps = compute_state.update();
-        // if fps >= 200. {
-        //     debug_count += 1;
-        // }
-        // println!("{:?}", fps);
-        compute_state.render();
-    }
     println!("FINISHED RENDER");
-    println!("{} / {}", debug_count , FRAMES);
     finish_and_export(compute_state);
-    // println!("SAVED IMAGE");
 }
 
 pub fn finish_and_export(compute_state: ComputeState) {
@@ -354,10 +335,7 @@ pub fn finish_and_export(compute_state: ComputeState) {
 
     let output_staging_buffer = compute_state.device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: (RESOLUTION as u64
-            * RESOLUTION as u64
-            * 4
-            * std::mem::size_of::<f32>() as u64),
+        size: (RESOLUTION as u64 * RESOLUTION as u64 * 4 * std::mem::size_of::<f32>() as u64),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
@@ -387,17 +365,15 @@ pub fn finish_and_export(compute_state: ComputeState) {
     compute_state
         .queue
         .submit(std::iter::once(encoder.finish()));
-    println!("SAVING");
+    // println!("SAVING");
+
     // Save the texture to an image before exiting
     pollster::block_on(async {
         compute_state
             .save_rgba32float_to_rgba8_image(
                 &output_staging_buffer,
-                (
-                    RESOLUTION,
-                    RESOLUTION,
-                ),
-                "output_image_compute.png",
+                (RESOLUTION, RESOLUTION),
+                "OUTPUT.png",
             )
             .await;
     });

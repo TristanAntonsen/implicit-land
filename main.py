@@ -173,17 +173,16 @@ if __name__ == "__main__":
 
     ctx = FormatContext(float_format="explicit_decimal")
 
-    a = Circle(Point(0., 0.), 0.5)
-    b = Box(Point(-0.5, -0.5), 1., 1.)
-    
-    c = union(a,b)
+    a = Circle(Point(0.0, 0.0), 0.5)
+    b = Box(Point(-0.5, -0.5), 1.0, 1.0)
+
+    c = union(a, b)
     final = c
     expr = final.to_expr(ctx)
 
-
     # print(expr)
-    print(renderer.sum_as_string(10,10))
-    print(renderer.render_with_wgsl(10,10))
+    shader = open("renderer/src/compute_shader.wgsl").read()
+    renderer.render_with_wgsl(shader)
 
-    # import subprocess 
+    # import subprocess
     # subprocess.run("pbcopy", text=True, input=expr)
