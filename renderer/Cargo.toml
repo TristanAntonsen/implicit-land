@@ -1,0 +1,21 @@
+[package]
+name = "renderer"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "renderer"
+crate-type = ["cdylib"]
+
+[dependencies]
+bytemuck = { version = "1.23.1", features = ["derive"] }
+futures-intrusive = "0.5.0"
+pollster = "0.4.0"
+pyo3 = "0.25.0"
+wgpu = "23.0.1"
+
+[dependencies.image]
+version = "0.24"
+default-features = false
+features = ["png", "jpeg"]
