@@ -6,7 +6,7 @@ Goal is to draw SDFs easily in python and provide some useful functions such tha
 
 ---
 
-Requirements:
+Requirements (the interesting ones):
 - Rust
 - Python
 - wgpu
@@ -52,4 +52,4 @@ min(min(min(min(roundDifference(roundDifference(circle(p,vec2<f32>(-0.1000,-0.07
 
 You'll notice that there's some low level stuff like `max()` and some higher level stuff like `circle()`. This is because I just wrote the higher level functions in the shader and wgpu optimizes the abstraction away anyway. Much easier to debug this way.
 
-It does *not* do any sort of [clever optimization](https://www.mattkeeter.com/research/mpr/) for sdfs specifically. But, since it's purely to create simple images (and it's in a gpu shader anyway), performance doesn't really matter.
+It does *not* do any sort of [clever optimization](https://www.mattkeeter.com/research/mpr/) for sdfs specifically. But, since it's purely to create simple images (and it's in a gpu shader anyway), performance doesn't really matter. The first image took ~500ms at 1024x1024 including writing the .png to disk. I haven't measured anything more.
