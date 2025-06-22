@@ -112,7 +112,7 @@ fn render(uv: vec2<f32>) -> vec4<f32> {
 
     fragColor = overlay(fragColor, vec4<f32>(0.0), (abs(d) - borderWidth) / aaWidth);
 
-    
+    fragColor.w = 1.;
     fragColor = clamp(fragColor, vec4f(0.0), vec4f(1.0));
 
     return fragColor;
