@@ -12,7 +12,7 @@ Requirements:
 - wgpu
 - Maturin (py03) for python bindings
 
-(not stress tested with different python/rust/wgpu versions yet)
+(not tested with different python/rust/wgpu versions or different machines yet. This was python 3.12 on a Macbook)
 
 Instructions to Build:
 
