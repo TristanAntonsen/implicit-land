@@ -8,8 +8,8 @@ fn sum_as_string(a: usize, b: usize) -> PyResult<String> {
 
 /// Renders the result from python
 #[pyfunction]
-fn render_with_wgsl(shader: &str) -> PyResult<()> {
-    Ok(render(shader.to_string()))
+fn render_with_wgsl(shader: &str, resolution: usize, output_path: &str) -> PyResult<()> {
+    Ok(render(shader.to_string(), resolution as u32, output_path))
 }
 
 /// A Python module implemented in Rust.cl
@@ -22,21 +22,19 @@ fn renderer(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 //////// Renderer stuff
 
-use std::time::Instant;
+use std::fs::File;
+use std::io::BufWriter;
 use std::{thread, time};
 use wgpu::util::DeviceExt;
 use wgpu::Adapter;
 
 const GRID_SIZE: u32 = 16;
-const RESOLUTION: u32 = 1024;
-const FRAMES: u32 = 1;
 
-pub fn render(shader: String) {
+pub fn render(shader: String, resolution: u32, output_path: &str) {
     let time = time::Duration::from_millis(3);
-    println!("STARTING");
     thread::sleep(time);
 
-    pollster::block_on(run(shader));
+    pollster::block_on(run(shader, resolution, output_path));
 }
 
 pub struct ComputeState {
@@ -44,18 +42,19 @@ pub struct ComputeState {
     queue: wgpu::Queue,
     compute_pipeline: wgpu::ComputePipeline,
     compute_bind_group: wgpu::BindGroup,
+    resolution: u32,
     output_texture: wgpu::Texture,
-    uniform_buf: wgpu::Buffer,
-    time: [u32; 4],
-    last_frame_time: Instant,
+    _uniform_buf: wgpu::Buffer,
 }
 
 impl ComputeState {
-    async fn new(adapter: Adapter, shader: String) -> ComputeState {
+    async fn new(adapter: Adapter, shader: String, resolution: u32) -> ComputeState {
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     required_features: wgpu::Features::empty(),
+                    // required_features: wgpu::Features::BGRA8UNORM_STORAGE,
+                    // required_features: ['bgra8unorm-storage'],
                     required_limits: wgpu::Limits::default(),
                     label: None,
                     memory_hints: Default::default(),
@@ -69,20 +68,12 @@ impl ComputeState {
             label: Some("Compute Shader"),
             source: wgpu::ShaderSource::Wgsl(shader.into()),
         });
-        // let compute_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        //     label: Some("Compute Shader"),
-        //     source: wgpu::ShaderSource::Wgsl(
-        //         fs::read_to_string("src/compute_shader.wgsl")
-        //             .expect("Could not load shader")
-        //             .into(),
-        //     ),
-        // });
 
         let output_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Compute Output Texture"),
             size: wgpu::Extent3d {
-                width: RESOLUTION as u32,
-                height: RESOLUTION as u32,
+                width: resolution,
+                height: resolution,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -97,11 +88,11 @@ impl ComputeState {
 
         let size_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Resolution Buffer"),
-            contents: bytemuck::cast_slice(&[RESOLUTION, RESOLUTION]),
+            contents: bytemuck::cast_slice(&[resolution, resolution]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let _uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Uniform Buffer"),
             contents: bytemuck::cast_slice(&[0, 0, 0, 0]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -170,7 +161,7 @@ impl ComputeState {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &uniform_buf,
+                        buffer: &_uniform_buf,
                         offset: 0,
                         size: None,
                     }),
@@ -194,30 +185,18 @@ impl ComputeState {
             cache: None,
         });
 
-        let time = [0, 0, 0, 0];
-        let last_frame_time = Instant::now();
-
         Self {
             device,
             queue,
             compute_pipeline,
             compute_bind_group,
+            resolution,
             output_texture,
-            uniform_buf,
-            time,
-            last_frame_time,
+            _uniform_buf,
         }
     }
 
-    fn update(&mut self) -> f32 {
-        let fps = self.fps();
-
-        self.time[0] += 1;
-        self.queue
-            .write_buffer(&self.uniform_buf, 0, bytemuck::cast_slice(&[self.time]));
-
-        fps
-    }
+    fn update(&mut self) -> () {}
 
     async fn save_rgba32float_to_rgba8_image(
         &self,
@@ -254,33 +233,40 @@ impl ComputeState {
                 let a = f32::from_ne_bytes(chunk[12..16].try_into().unwrap());
 
                 // Normalize and convert to u8
-                rgba_u8_data.push((linear_to_gamma(r).clamp(0.0, 1.0) * 255.0) as u8);
-                rgba_u8_data.push((linear_to_gamma(g).clamp(0.0, 1.0) * 255.0) as u8);
-                rgba_u8_data.push((linear_to_gamma(b).clamp(0.0, 1.0) * 255.0) as u8);
-                rgba_u8_data.push((linear_to_gamma(a).clamp(0.0, 1.0) * 255.0) as u8);
+                rgba_u8_data.push((r.clamp(0.0, 1.0) * 255.0).round() as u8);
+                rgba_u8_data.push((g.clamp(0.0, 1.0) * 255.0).round() as u8);
+                rgba_u8_data.push((b.clamp(0.0, 1.0) * 255.0).round() as u8);
+                rgba_u8_data.push((a.clamp(0.0, 1.0) * 255.0).round() as u8);
+
+                // rgba_u8_data.push((linear_to_srgb(r.clamp(0.0, 1.0)) * 255.0).round() as u8);
+                // rgba_u8_data.push((linear_to_srgb(g.clamp(0.0, 1.0)) * 255.0).round() as u8);
+                // rgba_u8_data.push((linear_to_srgb(b.clamp(0.0, 1.0)) * 255.0).round() as u8);
+                // rgba_u8_data.push((a.clamp(0.0, 1.0) * 255.0).round() as u8); // leave alpha linear
             }
         }
         // Save to an image
-        use image::{ImageBuffer, Rgba};
-        let image = ImageBuffer::<Rgba<u8>, _>::from_raw(RESOLUTION, RESOLUTION, rgba_u8_data)
-            .expect("Failed to create image buffer");
-        image.save(output_file).expect("Failed to save image");
+        use png::Encoder;
+
+        let file = File::create(output_file).expect("Failed to create output file");
+        let w = &mut BufWriter::new(file);
+
+        // Configure PNG encoder
+        let mut encoder = Encoder::new(w, self.resolution, self.resolution);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+
+        // Mark image as using sRGB transfer function
+        encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
+
+        let mut writer = encoder.write_header().expect("Failed to write PNG header");
+
+        writer
+            .write_image_data(&rgba_u8_data)
+            .expect("Failed to write image data");
 
         // Unmap the buffer
         drop(data); // Ensure no references remain to the data slice
         output_staging_buffer.unmap();
-    }
-
-    fn fps(&mut self) -> f32 {
-        // Calculate frame time
-        let now = Instant::now();
-        let frame_time = now - self.last_frame_time;
-        self.last_frame_time = now;
-
-        // if self.time[0] != 0 && self.time[0] < SAMPLES {
-        let dt: f32 = frame_time.as_millis() as f32;
-        let fps = (1000. / dt.max(0.001)).min(200.);
-        return fps;
     }
 
     fn render(&mut self) {
@@ -298,34 +284,35 @@ impl ComputeState {
             compute_pass.set_bind_group(0, &self.compute_bind_group, &[]);
             compute_pass.set_pipeline(&self.compute_pipeline);
 
-            let workgroups_x = RESOLUTION / GRID_SIZE;
-            let workgroups_y = RESOLUTION / GRID_SIZE;
+            let workgroups_x = self.resolution / GRID_SIZE;
+            let workgroups_y = self.resolution / GRID_SIZE;
 
             compute_pass.dispatch_workgroups(workgroups_x as u32, workgroups_y as u32, 1);
         }
 
         // self.device.poll(wgpu::Maintain::Wait);
         self.device.poll(wgpu::Maintain::Poll);
+
         // submit will accept anything that implements IntoIter
         self.queue.submit(std::iter::once(encoder.finish()));
     }
 }
 
-pub async fn run(shader: String) {
+pub async fn run(shader: String, resolution: u32, output_path: &str) {
     let instance = wgpu::Instance::default();
 
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions::default())
         .await
         .unwrap();
-    let mut compute_state = ComputeState::new(adapter, shader).await;
+    let mut compute_state = ComputeState::new(adapter, shader, resolution).await;
     compute_state.render();
 
-    println!("FINISHED RENDER");
-    finish_and_export(compute_state);
+    // println!("FINISHED RENDER");
+    finish_and_export(compute_state, output_path);
 }
 
-pub fn finish_and_export(compute_state: ComputeState) {
+pub fn finish_and_export(compute_state: ComputeState, output_path: &str) {
     let mut encoder =
         compute_state
             .device
@@ -335,7 +322,10 @@ pub fn finish_and_export(compute_state: ComputeState) {
 
     let output_staging_buffer = compute_state.device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: (RESOLUTION as u64 * RESOLUTION as u64 * 4 * std::mem::size_of::<f32>() as u64),
+        size: (compute_state.resolution as u64
+            * compute_state.resolution as u64
+            * 4
+            * std::mem::size_of::<f32>() as u64),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
@@ -352,13 +342,13 @@ pub fn finish_and_export(compute_state: ComputeState) {
             layout: wgpu::ImageDataLayout {
                 offset: 0,
                 // This needs to be padded to 256.
-                bytes_per_row: Some((RESOLUTION * 16) as u32),
-                rows_per_image: Some(RESOLUTION as u32),
+                bytes_per_row: Some(compute_state.resolution * 16),
+                rows_per_image: Some(compute_state.resolution),
             },
         },
         wgpu::Extent3d {
-            width: RESOLUTION as u32,
-            height: RESOLUTION as u32,
+            width: compute_state.resolution,
+            height: compute_state.resolution,
             depth_or_array_layers: 1,
         },
     );
@@ -372,17 +362,25 @@ pub fn finish_and_export(compute_state: ComputeState) {
         compute_state
             .save_rgba32float_to_rgba8_image(
                 &output_staging_buffer,
-                (RESOLUTION, RESOLUTION),
-                "OUTPUT.png",
+                (compute_state.resolution, compute_state.resolution),
+                output_path,
             )
             .await;
     });
 }
 
-fn linear_to_gamma(linear: f32) -> f32 {
-    if linear > 0. {
-        return linear.sqrt();
-    };
+// fn linear_to_gamma(linear: f32) -> f32 {
+//     if linear > 0. {
+//         return linear.sqrt();
+//     };
 
-    return 0.;
-}
+//     return 0.;
+// }
+
+// fn linear_to_srgb(c: f32) -> f32 {
+//     if c <= 0.0031308 {
+//         12.92 * c
+//     } else {
+//         1.055 * c.powf(1.0 / 2.4) - 0.055
+//     }
+// }
