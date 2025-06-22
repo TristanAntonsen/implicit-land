@@ -1,10 +1,5 @@
 use pyo3::prelude::*;
-
-/// Formats the sum of two numbers as string.
-#[pyfunction]
-fn sum_as_string(a: usize, b: usize) -> PyResult<String> {
-    Ok((a + b).to_string())
-}
+//////// Python binding stuff
 
 /// Renders the result from python
 #[pyfunction]
@@ -15,7 +10,6 @@ fn render_with_wgsl(shader: &str, resolution: usize, output_path: &str) -> PyRes
 /// A Python module implemented in Rust.cl
 #[pymodule]
 fn renderer(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(sum_as_string, m)?)?;
     m.add_function(wrap_pyfunction!(render_with_wgsl, m)?)?;
     Ok(())
 }
@@ -238,6 +232,7 @@ impl ComputeState {
                 rgba_u8_data.push((b.clamp(0.0, 1.0) * 255.0).round() as u8);
                 rgba_u8_data.push((a.clamp(0.0, 1.0) * 255.0).round() as u8);
 
+                // Why the hell is color space stuff so confusing
                 // rgba_u8_data.push((linear_to_srgb(r.clamp(0.0, 1.0)) * 255.0).round() as u8);
                 // rgba_u8_data.push((linear_to_srgb(g.clamp(0.0, 1.0)) * 255.0).round() as u8);
                 // rgba_u8_data.push((linear_to_srgb(b.clamp(0.0, 1.0)) * 255.0).round() as u8);
@@ -368,6 +363,9 @@ pub fn finish_and_export(compute_state: ComputeState, output_path: &str) {
             .await;
     });
 }
+
+
+// See above comment about disliking color spaces
 
 // fn linear_to_gamma(linear: f32) -> f32 {
 //     if linear > 0. {
