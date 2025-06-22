@@ -82,6 +82,8 @@ fn contourFac(d: f32, scale: f32, thick: f32) -> f32 {
     return smoothstep(0.0, 1.0, c / thick);
 }
 
+
+// Mostly hard coded stuff, will expose more params later
 fn render(uv: vec2<f32>) -> vec4<f32> {
     let res = map(uv);
     let d = res;
@@ -93,9 +95,6 @@ fn render(uv: vec2<f32>) -> vec4<f32> {
     let outerColor = vec4<f32>(OUTER_COLOR);
     let innerColor = vec4<f32>(INNER_COLOR);
 
-    // let outerColor = vec4<f32>(38., 70., 83., 255.) / 255.;
-    // let innerColor = vec4<f32>(42., 157., 143., 0.) / 255.;
-
     let aaWidth = 0.001;
     let lineWidth = 0.001;
     let borderWidth = 0.001;
@@ -104,10 +103,6 @@ fn render(uv: vec2<f32>) -> vec4<f32> {
     
     var fac1 = 0.125;
     var fac2 = 0.5;
-
-    // fac1 = 0.;
-    // fac2 = 0.;
-
 
     var sgn = sign(d) * 0.5 +  0.5; // 0 or 1
 
