@@ -46,6 +46,10 @@ This produces:
 ---
 This is what python produces and sends to webgpu for the first example:
 
-`min(min(min(min(roundDifference(roundDifference(circle(p,vec2<f32>(-0.1000,-0.0750),0.3400),min(box(p-vec2<f32>(-0.1000,-0.0750),vec2<f32>(0.2000,0.3000)),box(p-vec2<f32>(-0.1000,-0.0750),vec2<f32>(0.7500,0.1000))), 0.05),circle(p,vec2<f32>(0.1720,0.1290),0.0200), 0.0075),circle(p,vec2<f32>(0.1720,0.1290),0.0100)),circle(p,vec2<f32>(0.4000,0.3000),0.0100)),line(p,vec2<f32>(0.4000,0.3000),vec2<f32>(0.1720,0.1290))),min(box(p-vec2<f32>(-0.1000,-0.0750),vec2<f32>(0.2000,0.3000)),box(p-vec2<f32>(-0.1000,-0.0750),vec2<f32>(0.7500,0.1000)))+0.01)`
+```
+min(min(min(min(roundDifference(roundDifference(circle(p,vec2<f32>(-0.1000,-0.0750),0.3400),min(box(p-vec2<f32>(-0.1000,-0.0750),vec2<f32>(0.2000,0.3000)),box(p-vec2<f32>(-0.1000,-0.0750),vec2<f32>(0.7500,0.1000))), 0.05),circle(p,vec2<f32>(0.1720,0.1290),0.0200), 0.0075),circle(p,vec2<f32>(0.1720,0.1290),0.0100)),circle(p,vec2<f32>(0.4000,0.3000),0.0100)),line(p,vec2<f32>(0.4000,0.3000),vec2<f32>(0.1720,0.1290))),min(box(p-vec2<f32>(-0.1000,-0.0750),vec2<f32>(0.2000,0.3000)),box(p-vec2<f32>(-0.1000,-0.0750),vec2<f32>(0.7500,0.1000)))+0.01)
+```
 
-It does *not* do any sort of [clever optimization](https://www.mattkeeter.com/research/mpr/). But, since it's purely to create simple images (and it's in a gpu shader anyway), performance doesn't really matter.
+You'll notice that there's some low level stuff like `max()` and some higher level stuff like `circle()`. This is because I just wrote the higher level functions in the shader and wgpu optimizes the abstraction away anyway. Much easier to debug this way.
+
+It does *not* do any sort of [clever optimization](https://www.mattkeeter.com/research/mpr/) for sdfs specifically. But, since it's purely to create simple images (and it's in a gpu shader anyway), performance doesn't really matter.
