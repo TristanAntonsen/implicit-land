@@ -1,16 +1,32 @@
+use futures_intrusive::channel::shared::oneshot_channel;
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
+
 //////// Python binding stuff
 
 /// Renders the result from python
 #[pyfunction]
-fn render_with_wgsl(shader: &str, resolution: usize, output_path: &str) -> PyResult<()> {
-    Ok(render(shader.to_string(), resolution as u32, output_path))
+fn render_png(shader: &str, resolution: usize, output_path: &str) -> PyResult<()> {
+    let rgba_u8_data = render_rgba_u8(shader.to_string(), resolution as u32);
+
+    save_rgba8_image(&rgba_u8_data, resolution, output_path);
+
+    Ok(())
+}
+
+/// Renders the result from python
+#[pyfunction]
+fn render_data(py: Python<'_>, shader: &str, resolution: usize) -> PyResult<Py<PyBytes>> {
+    let rgba_u8_data = render_rgba_u8(shader.to_string(), resolution as u32);
+
+    Ok(PyBytes::new(py, &rgba_u8_data).into())
 }
 
 /// A Python module implemented in Rust.cl
 #[pymodule]
 fn renderer(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(render_with_wgsl, m)?)?;
+    m.add_function(wrap_pyfunction!(render_png, m)?)?;
+    m.add_function(wrap_pyfunction!(render_data, m)?)?;
     Ok(())
 }
 
@@ -18,17 +34,14 @@ fn renderer(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 use std::fs::File;
 use std::io::BufWriter;
-use std::{thread, time};
 use wgpu::util::DeviceExt;
-use wgpu::Adapter;
+use wgpu::{Adapter, PollType};
 
 const GRID_SIZE: u32 = 16;
 
-pub fn render(shader: String, resolution: u32, output_path: &str) {
-    let time = time::Duration::from_millis(3);
-    thread::sleep(time);
-
-    pollster::block_on(run(shader, resolution, output_path));
+pub fn render_rgba_u8(shader: String, resolution: u32) -> Vec<u8> {
+    let rgba_u8_data = pollster::block_on(run(shader, resolution));
+    rgba_u8_data
 }
 
 pub struct ComputeState {
@@ -44,17 +57,13 @@ pub struct ComputeState {
 impl ComputeState {
     async fn new(adapter: Adapter, shader: String, resolution: u32) -> ComputeState {
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    required_features: wgpu::Features::empty(),
-                    // required_features: wgpu::Features::BGRA8UNORM_STORAGE,
-                    // required_features: ['bgra8unorm-storage'],
-                    required_limits: wgpu::Limits::default(),
-                    label: None,
-                    memory_hints: Default::default(),
-                },
-                None, // Trace path
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                label: None,
+                memory_hints: Default::default(),
+                trace: wgpu::Trace::Off,
+            })
             .await
             .unwrap();
 
@@ -190,79 +199,7 @@ impl ComputeState {
         }
     }
 
-    fn update(&mut self) -> () {}
-
-    async fn save_rgba32float_to_rgba8_image(
-        &self,
-        output_staging_buffer: &wgpu::Buffer,
-        resolution: (u32, u32),
-        output_file: &str,
-    ) {
-        // Map the buffer to access the data
-        let buffer_slice = output_staging_buffer.slice(..);
-        let (tx, rx) = futures_intrusive::channel::shared::oneshot_channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            tx.send(result).unwrap();
-        });
-        self.device.poll(wgpu::Maintain::Wait);
-        rx.receive().await.unwrap().unwrap();
-
-        // Retrieve the raw data
-        let data = buffer_slice.get_mapped_range();
-        let texture_width = resolution.0 as usize;
-        let texture_height = resolution.1 as usize;
-        let bytes_per_row = ((texture_width * 16 + 255) / 256) * 256; // Adjust for 256-byte alignment
-
-        // Convert the f32 data to u8
-        let mut rgba_u8_data = Vec::with_capacity(texture_width * texture_height * 4);
-        for row in 0..texture_height {
-            let row_start = row * bytes_per_row;
-            let row_end = row_start + texture_width * 16; // 16 bytes per pixel for RGBA32Float
-            let row_data = &data[row_start..row_end];
-
-            for chunk in row_data.chunks_exact(16) {
-                let r = f32::from_ne_bytes(chunk[0..4].try_into().unwrap());
-                let g = f32::from_ne_bytes(chunk[4..8].try_into().unwrap());
-                let b = f32::from_ne_bytes(chunk[8..12].try_into().unwrap());
-                let a = f32::from_ne_bytes(chunk[12..16].try_into().unwrap());
-
-                // Normalize and convert to u8
-                rgba_u8_data.push((r.clamp(0.0, 1.0) * 255.0).round() as u8);
-                rgba_u8_data.push((g.clamp(0.0, 1.0) * 255.0).round() as u8);
-                rgba_u8_data.push((b.clamp(0.0, 1.0) * 255.0).round() as u8);
-                rgba_u8_data.push((a.clamp(0.0, 1.0) * 255.0).round() as u8);
-
-                // Why the hell is color space stuff so confusing
-                // rgba_u8_data.push((linear_to_srgb(r.clamp(0.0, 1.0)) * 255.0).round() as u8);
-                // rgba_u8_data.push((linear_to_srgb(g.clamp(0.0, 1.0)) * 255.0).round() as u8);
-                // rgba_u8_data.push((linear_to_srgb(b.clamp(0.0, 1.0)) * 255.0).round() as u8);
-                // rgba_u8_data.push((a.clamp(0.0, 1.0) * 255.0).round() as u8); // leave alpha linear
-            }
-        }
-        // Save to an image
-        use png::Encoder;
-
-        let file = File::create(output_file).expect("Failed to create output file");
-        let w = &mut BufWriter::new(file);
-
-        // Configure PNG encoder
-        let mut encoder = Encoder::new(w, self.resolution, self.resolution);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-
-        // Mark image as using sRGB transfer function
-        encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
-
-        let mut writer = encoder.write_header().expect("Failed to write PNG header");
-
-        writer
-            .write_image_data(&rgba_u8_data)
-            .expect("Failed to write image data");
-
-        // Unmap the buffer
-        drop(data); // Ensure no references remain to the data slice
-        output_staging_buffer.unmap();
-    }
+    fn _update(&mut self) -> () {}
 
     fn render(&mut self) {
         let mut encoder = self
@@ -285,15 +222,29 @@ impl ComputeState {
             compute_pass.dispatch_workgroups(workgroups_x as u32, workgroups_y as u32, 1);
         }
 
-        // self.device.poll(wgpu::Maintain::Wait);
-        self.device.poll(wgpu::Maintain::Poll);
+        self.device.poll(PollType::Wait).expect("GPU Poll Error");
 
         // submit will accept anything that implements IntoIter
         self.queue.submit(std::iter::once(encoder.finish()));
     }
 }
 
-pub async fn run(shader: String, resolution: u32, output_path: &str) {
+fn save_rgba8_image(rgba_u8_data: &[u8], resolution: usize, output_file: &str) {
+    // Save PNG
+    use png::Encoder;
+    let file = File::create(output_file).expect("Failed to create output file");
+    let w = &mut BufWriter::new(file);
+
+    let mut encoder = Encoder::new(w, resolution as u32, resolution as u32);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
+    let mut writer = encoder.write_header().unwrap();
+
+    writer.write_image_data(&rgba_u8_data).unwrap();
+}
+
+pub async fn run(shader: String, resolution: u32) -> Vec<u8> {
     let instance = wgpu::Instance::default();
 
     let adapter = instance
@@ -303,11 +254,6 @@ pub async fn run(shader: String, resolution: u32, output_path: &str) {
     let mut compute_state = ComputeState::new(adapter, shader, resolution).await;
     compute_state.render();
 
-    // println!("FINISHED RENDER");
-    finish_and_export(compute_state, output_path);
-}
-
-pub fn finish_and_export(compute_state: ComputeState, output_path: &str) {
     let mut encoder =
         compute_state
             .device
@@ -326,15 +272,15 @@ pub fn finish_and_export(compute_state: ComputeState, output_path: &str) {
     });
 
     encoder.copy_texture_to_buffer(
-        wgpu::ImageCopyTexture {
+        wgpu::TexelCopyTextureInfo {
             texture: &compute_state.output_texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
-        wgpu::ImageCopyBuffer {
+        wgpu::TexelCopyBufferInfo {
             buffer: &output_staging_buffer,
-            layout: wgpu::ImageDataLayout {
+            layout: wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 // This needs to be padded to 256.
                 bytes_per_row: Some(compute_state.resolution * 16),
@@ -350,35 +296,49 @@ pub fn finish_and_export(compute_state: ComputeState, output_path: &str) {
     compute_state
         .queue
         .submit(std::iter::once(encoder.finish()));
-    // println!("SAVING");
 
-    // Save the texture to an image before exiting
-    pollster::block_on(async {
-        compute_state
-            .save_rgba32float_to_rgba8_image(
-                &output_staging_buffer,
-                (compute_state.resolution, compute_state.resolution),
-                output_path,
-            )
-            .await;
+    // Map the buffer to access the data
+    let buffer_slice = output_staging_buffer.slice(..);
+    let (sender, receiver) = oneshot_channel();
+
+    buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+        sender.send(result).unwrap();
     });
+
+    // Block until GPU has finished writing the data
+    compute_state
+        .device
+        .poll(PollType::Wait)
+        .expect("GPU Write Error");
+    receiver.receive().await.unwrap().unwrap(); // 1st unwrap: channel result, 2nd: map_async result
+
+    let data = buffer_slice.get_mapped_range().to_vec();
+
+    output_staging_buffer.unmap();
+
+    // Convert RGBA32F → RGBA8
+    let width = resolution as usize;
+    let height = resolution as usize;
+    let bytes_per_pixel = 16;
+    let padded_bytes_per_row = ((width * bytes_per_pixel + 255) / 256) * 256;
+
+    let mut rgba_u8_data = Vec::with_capacity(width * height * 4);
+    for row in 0..height {
+        let row_start = row * padded_bytes_per_row;
+        let row_data = &data[row_start..row_start + width * bytes_per_pixel];
+
+        for chunk in row_data.chunks_exact(16) {
+            let r = f32::from_ne_bytes(chunk[0..4].try_into().unwrap());
+            let g = f32::from_ne_bytes(chunk[4..8].try_into().unwrap());
+            let b = f32::from_ne_bytes(chunk[8..12].try_into().unwrap());
+            let a = f32::from_ne_bytes(chunk[12..16].try_into().unwrap());
+
+            rgba_u8_data.push((r.clamp(0.0, 1.0) * 255.0).round() as u8);
+            rgba_u8_data.push((g.clamp(0.0, 1.0) * 255.0).round() as u8);
+            rgba_u8_data.push((b.clamp(0.0, 1.0) * 255.0).round() as u8);
+            rgba_u8_data.push((a.clamp(0.0, 1.0) * 255.0).round() as u8);
+        }
+    }
+
+    rgba_u8_data
 }
-
-
-// See above comment about disliking color spaces
-
-// fn linear_to_gamma(linear: f32) -> f32 {
-//     if linear > 0. {
-//         return linear.sqrt();
-//     };
-
-//     return 0.;
-// }
-
-// fn linear_to_srgb(c: f32) -> f32 {
-//     if c <= 0.0031308 {
-//         12.92 * c
-//     } else {
-//         1.055 * c.powf(1.0 / 2.4) - 0.055
-//     }
-// }

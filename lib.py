@@ -1,5 +1,6 @@
 import math
 
+
 class FormatContext:
     def __init__(self, language="default", float_format="default"):
         self.language = language
@@ -157,7 +158,7 @@ class Circle(Primitive):
         self.radius = radius
 
     def eval_sdf(self, p: Point):
-        pt = p-self.center
+        pt = p - self.center
         return math.sqrt(pt.x * pt.x + pt.y * pt.y) - self.radius
 
     def eval_gradient(self, p: Point):
@@ -300,6 +301,7 @@ def round_intersection(a: SDFNode, b: SDFNode, radius: float) -> SDFNode:
 GRID_SIZE = 16
 BLUE = (36.0, 138.0, 255.0)
 ORANGE = (255.0, 75.0, 0)
+RED = (255.0, 0.0, 0.0)
 
 
 class Canvas:
@@ -325,30 +327,39 @@ class Canvas:
         else:
             raise Exception("Empty Expression")
 
-    def set_inner_color(self, r, g, b, normalize=False):
+    def set_inner_color(self, r, g, b, alpha=1, normalize=False):
 
         if normalize:
-            self.inner_color = f"{r / 255.},{g / 255.},{b / 255.},{1}"
+            self.inner_color = f"{r / 255.},{g / 255.},{b / 255.},{alpha}"
         else:
             self.inner_color = f"{r},{g},{b},{1}"
 
-    def set_outer_color(self, r, g, b, normalize=False):
+    def set_outer_color(self, r, g, b, alpha=1, normalize=False):
 
         if normalize:
-            self.outer_color = f"{r / 255.},{g / 255.},{b / 255.},{1}"
+            self.outer_color = f"{r / 255.},{g / 255.},{b / 255.},{alpha}"
         else:
             self.outer_color = f"{r},{g},{b},{1}"
 
     def generate_image(self, result, path):
         import renderer
+        import numpy as np
+        from PIL import Image
 
         expr = result.to_expr(self.ctx)
 
-        self.set_inner_color(*BLUE, normalize=True)
+        self.set_inner_color(*RED, normalize=True)
         self.set_outer_color(1.0, 1.0, 1.0)
         self.init_shader(expr)
 
-        renderer.render_with_wgsl(self.shader, self.resolution, path)
+        data = renderer.render_data(self.shader, self.resolution)
+
+        arr = np.frombuffer(data, dtype=np.uint8).reshape(
+            (self.resolution, self.resolution, 4)
+        )
+
+        # Convert back to PIL image if needed
+        return Image.fromarray(arr, mode="RGBA")
 
 
 if __name__ == "__main__":
