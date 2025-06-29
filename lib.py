@@ -1,7 +1,7 @@
-import math
 import renderer
 import numpy as np
 from PIL import Image, ImageDraw
+from random import random
 
 
 class FormatContext:
@@ -15,6 +15,9 @@ class FormatContext:
             return f"{value:.4f}"
 
         return str(value)
+
+
+EPSILON = 0.001
 
 
 class Vector:
@@ -49,14 +52,28 @@ class Vector:
     def __truediv__(self, value):
         return Vector(self.x / value, self.y / value)
 
+    def __iter__(self):
+        yield self.x
+        yield self.y
+
     def norm(self):
-        return math.sqrt(self.x * self.x + self.y * self.y)
+        return np.sqrt(self.x * self.x + self.y * self.y)
 
     def normalize(self):
         return self / self.norm()
 
     def dot(self, other):
         return self.x * other.x + self.y * other.y
+
+    def rotated(self, angle):
+        arad = np.radians(angle)
+        ct = np.cos(arad)
+        st = np.sin(arad)
+
+        return Vector(self.x * ct - self.y * st, self.x * st + self.y * ct)
+
+    def random():
+        return Vector(random() - 0.5, random() - 0.5)
 
 
 class Point(Vector):
@@ -74,6 +91,9 @@ class Point(Vector):
 
     def wgsl(self):
         return f"vec2<f32>({self.x},{self.y})"
+
+    def random():
+        return Point(random() - 0.5, random() - 0.5)
 
 
 class BoundingBox:
@@ -104,6 +124,16 @@ class SDFNode:
 
     def bounding_box(self) -> BoundingBox:
         raise NotImplementedError()
+
+    def eval_sdf(self, p: Point):
+        raise NotImplementedError()
+
+    def eval_gradient_fd(self, p: Point):
+        dx = Vector(EPSILON, 0)
+        dy = Vector(0, EPSILON)
+        ddx = self.eval_sdf(p + dx) - self.eval_sdf(p - dx)
+        ddy = self.eval_sdf(p + dy) - self.eval_sdf(p - dy)
+        return Vector(ddx, ddy)
 
     def __neg__(self):
         return Operator("multiply", self, as_node(-1))
@@ -168,7 +198,7 @@ class Circle(Primitive):
 
     def eval_sdf(self, p: Point):
         pt = p - self.center
-        return math.sqrt(pt.x * pt.x + pt.y * pt.y) - self.radius
+        return np.sqrt(pt.x * pt.x + pt.y * pt.y) - self.radius
 
     def eval_gradient(self, p: Point):
         return (p - self.center).normalize()
@@ -194,11 +224,13 @@ class Plane(Primitive):
 
 
 class Box(Primitive):
-    def __init__(self, center, width, height):
+    def __init__(self, center: Point, width, height):
         super().__init__(center)
 
         self.width = width
         self.height = height
+        self.min_point = center - Vector(width, height) / 2
+        self.max_point = center + Vector(width, height) / 2
 
     def to_expr(self, ctx: FormatContext):
 
@@ -211,6 +243,13 @@ class Box(Primitive):
 
     def eval_gradient(self, point: Point):
         raise NotImplementedError()
+
+    def bounding_box(self):
+
+        pmin = self.center - Vector(self.width, self.height) / 2
+        pmax = self.center + Vector(self.width, self.height) / 2
+
+        return BoundingBox(pmin, pmax)
 
 
 class BoxSharp(Primitive):
@@ -276,6 +315,9 @@ class Line(Primitive):
 
         return f"line(p,vec2<f32>({sx},{sy}),vec2<f32>({ex},{ey}))"
 
+    def from_point_direction(point: Point, direction: Vector, length: float):
+        return Line(point, point + direction.normalize() * length)
+
 
 class Operator(SDFNode):
     def __init__(self, op: str, left: SDFNode, right: SDFNode, param=None):
@@ -283,6 +325,37 @@ class Operator(SDFNode):
         self.left = as_node(left)
         self.right = as_node(right)
         self.param = param
+
+    def eval_gradient_fd(self, p):
+        return super().eval_gradient_fd(p)
+
+    def eval_sdf(self, p: Point):
+        left_sdf = self.left.eval_sdf(p)
+        right_sdf = self.right.eval_sdf(p)
+
+        match self.op:
+            case "add":
+                return left_sdf + right_sdf
+            case "subtract":
+                return left_sdf - right_sdf
+            case "multiply":
+                return left_sdf * right_sdf
+            case "divide":
+                return left_sdf / right_sdf
+            case "union":
+                return np.minimum(left_sdf, right_sdf)
+            case "intersection":
+                return np.maximum(left_sdf, right_sdf)
+            case "difference":
+                return np.maximum(left_sdf, -right_sdf)
+            case "round_union":
+                raise NotImplementedError
+            case "round_intersection":
+                raise NotImplementedError
+            case "round_difference":
+                raise NotImplementedError
+            case _:
+                return None
 
     def to_expr(self, ctx: FormatContext):
 
@@ -386,6 +459,12 @@ class Color:
     def BLUE():
         return Color(0.0, 0.0, 255.0)
 
+    def BLUEMAIN():
+        return BLUEMAIN
+    
+    def GREENMAIN():
+        return GREENMAIN
+    
     def WHITE():
         return Color(255.0, 255.0, 255.0)
 
@@ -401,6 +480,7 @@ class Color:
 
 TILE_SIZE = 16
 BLUEMAIN = Color(36.0, 138.0, 255.0)
+GREENMAIN = Color(36.0, 255.0, 138.0)
 
 DEFAULT_SETTINGS = {
     "inner_color": BLUEMAIN,
@@ -409,6 +489,7 @@ DEFAULT_SETTINGS = {
     "contour_color_inner": BLUEMAIN * 1.25,
     "contour_color_outer": Color.WHITE(),
     "contour_spacing": 0.015,
+    "background_color": Color.WHITE(),
 }
 
 
@@ -423,7 +504,11 @@ class Canvas:
         self.shader = None
         self.ctx = FormatContext(float_format="explicit_decimal")
         self.settings = DEFAULT_SETTINGS
-        self.img: Image = None
+        self.img = Image.new(
+            "RGBA",
+            (self.resolution, self.resolution),
+            self.settings["background_color"].format_PIL(),
+        )
 
     def init_shader(self, expr):
         if expr is not None:
@@ -440,9 +525,9 @@ class Canvas:
         else:
             raise Exception("Empty Expression")
 
-    def generate_image(self, result):
+    def draw_sdf(self, sdf):
 
-        expr = result.to_expr(self.ctx)
+        expr = sdf.to_expr(self.ctx)
 
         self.init_shader(expr)
 
@@ -452,26 +537,33 @@ class Canvas:
             (self.resolution, self.resolution, 4)
         )
 
-        start_color = Color.WHITE()
-        start_img = Image.new(
-            "RGBA", (self.resolution, self.resolution), start_color.format_PIL()
-        )
-        gpu_img = Image.fromarray(arr, mode="RGBA")
+        self.img = Image.alpha_composite(self.img, Image.fromarray(arr, mode="RGBA"))
 
-        self.img = Image.alpha_composite(start_img, gpu_img)
+    def draw_point(self, p: Point, color: Color = Color.GREENMAIN(), weight=12):
+        draw = ImageDraw.Draw(self.img)
+        res = self.resolution
+        hres = res / 2
+        cx = p.x * res + hres
+        cy = -p.y * res + hres
+        r = weight
+        lw = max(1, round(weight/3))
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=1, width=lw, fill=color.format_PIL())
 
     def overlay_primitive(
         self, shape: Primitive, color: Color = Color.BLACK(), weight=4
     ):
 
         draw = ImageDraw.Draw(self.img)
-        cx = shape.center.x + self.resolution / 2
-        cy = shape.center.y + self.resolution / 2
+        res = self.resolution
+        hres = res / 2
+        cx = shape.center.x + hres
+        cy = shape.center.y + hres
         c = color.format_PIL()
 
         if isinstance(shape, Circle):
-            r = shape.radius * self.resolution
+            r = shape.radius * res
             draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=c)
+
         elif isinstance(shape, Line):
             xy = [
                 shape.start.x,
@@ -479,9 +571,20 @@ class Canvas:
                 shape.end.x,
                 -shape.end.y,
             ]
-            xy = [i * self.resolution + self.resolution / 2 for i in xy]
-            print(xy)
+            xy = [i * res + hres for i in xy]
             draw.line(xy, width=weight, fill=c)
+
+        elif isinstance(shape, BoxSharp) or isinstance(shape, Box):
+
+            bbox = shape.bounding_box()
+            draw.rectangle(
+                [
+                    tuple(bbox.min_point * res + Vector(hres, hres)),
+                    tuple(bbox.max_point * res + Vector(hres, hres)),
+                ],
+                width=weight,
+                fill=c,
+            )
 
         else:
             raise Exception("Wrong primitive type.")
@@ -494,4 +597,4 @@ if __name__ == "__main__":
     c = Circle(Point(0.125, 0.125), 0.125)
     b = Box(Point(0, 0), 0.25, 0.25)
     result = c | b
-    canvas.generate_image(result).show()
+    canvas.draw_sdf(result).show()
