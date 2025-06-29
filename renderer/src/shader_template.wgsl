@@ -42,6 +42,11 @@ fn box(p: vec2f, b: vec2f) -> f32 {
 	return length(max(d, vec2f(0))) + vmax(min(d, vec2f(0)));
 }
 
+fn boxSharp(p: vec2f, b: vec2f) -> f32 {
+	let d: vec2f = abs(p) - b * 0.5;
+	return max(d.x, d.y);
+}
+
 // https://mercury.sexy/hg_sdf/ (modified)
 fn line(p: vec2f, a: vec2f, b: vec2f) -> f32 {
 	var ab = b - a;
@@ -49,6 +54,9 @@ fn line(p: vec2f, a: vec2f, b: vec2f) -> f32 {
 	return length((ab*t + a) - p);
 }
 
+fn plane(p: vec2f, c: vec2f, n: vec2f) -> f32 {
+    return dot((p-c), normalize(n));
+}
 
 // The "Round" variant uses a quarter-circle to join the two objects smoothly:
 fn roundUnion(a: f32, b: f32, r: f32) -> f32 {
@@ -78,10 +86,9 @@ fn overlay(startColor: vec4<f32>, color: vec4<f32>, d: f32) -> vec4<f32> {
 
 fn contourFac(d: f32, scale: f32, thick: f32) -> f32 {
     let halfContour = 0.5 * scale;
-    let c = abs((abs(d) - halfContour) % scale - halfContour);
-    return smoothstep(0.0, 1.0, c / thick);
+    let c = abs(d % scale);
+    return smoothstep(1.0, 0.0, c / thick);
 }
-
 
 // Mostly hard coded stuff, will expose more params later
 fn render(uv: vec2<f32>) -> vec4<f32> {
@@ -90,30 +97,32 @@ fn render(uv: vec2<f32>) -> vec4<f32> {
 
 
     let field = d;
-    let contour = 0.03;
 
-    let outerColor = vec4<f32>(OUTER_COLOR);
-    let innerColor = vec4<f32>(INNER_COLOR);
+    let outerColor = vec4<f32>([[outer_color]]);
+    let innerColor = vec4<f32>([[inner_color]]);
+    let border_color = vec4<f32>([[border_color]]);
+    let contour_color_inner = vec4<f32>([[contour_color_inner]]);
+    let contour_color_outer = vec4<f32>([[contour_color_outer]]);
+    let contour_spacing = [[contour_spacing]];
 
     let aaWidth = 0.001;
-    let lineWidth = 0.001;
-    let borderWidth = 0.001;
+    let lineWidth = 0.002;
 
+    // Draw base shape
     var fragColor = mix(innerColor, outerColor, smoothstep(-0.5, 0.5, d / aaWidth));
-    
-    var fac1 = 0.125;
-    var fac2 = 0.5;
 
-    var sgn = sign(d) * 0.5 +  0.5; // 0 or 1
+    // Draw isolines
+    var cfac = contourFac(d, contour_spacing, lineWidth);
+    var io = sign(d) * 0.5 + 0.5;
 
-    var fac = fac1 * sgn - fac2*(1-sgn);
+    fragColor = mix(fragColor, contour_color_inner, cfac * (1. - io));
+    fragColor = mix(fragColor, contour_color_outer, cfac * io);
 
-    fragColor = mix(fragColor * (1 - fac), fragColor, contourFac(d, contour, lineWidth));
+    // Draw Border
+    fragColor = overlay(fragColor, border_color, (abs(d) - lineWidth / 2.) / aaWidth);
 
-    fragColor = overlay(fragColor, vec4<f32>(0.0), (abs(d) - borderWidth) / aaWidth);
-
-    fragColor.w = 1.;
-    fragColor = clamp(fragColor, vec4f(0.0), vec4f(1.0));
+    // Clamp to 0-1 for u8
+    fragColor = clamp(fragColor, vec4f(0.), vec4f(1.0));
 
     return fragColor;
 }

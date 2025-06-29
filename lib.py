@@ -1,4 +1,7 @@
 import math
+import renderer
+import numpy as np
+from PIL import Image, ImageDraw
 
 
 class FormatContext:
@@ -24,6 +27,9 @@ class Vector:
 
     def __str__(self):
         return f"({self.x},{self.y})"
+
+    def wgsl(self):
+        return f"vec2<f32>({self.x},{self.y})"
 
     def __add__(self, other):
         return Vector(self.x + other.x, self.y + other.y)
@@ -65,6 +71,9 @@ class Point(Vector):
 
     def max(self, other):
         return Point(max(self.x, other.x), max(self.y, other.y))
+
+    def wgsl(self):
+        return f"vec2<f32>({self.x},{self.y})"
 
 
 class BoundingBox:
@@ -173,6 +182,17 @@ class Circle(Primitive):
         return f"circle(p,vec2<f32>({x},{y}),{r})"
 
 
+class Plane(Primitive):
+    def __init__(self, center, nx, ny):
+        super().__init__(center)
+
+        self.normal: Vector = Vector(nx, ny)
+
+    def to_expr(self, ctx: FormatContext):
+
+        return f"plane(p,{self.center.wgsl()},{self.normal.normalize().wgsl()})"
+
+
 class Box(Primitive):
     def __init__(self, center, width, height):
         super().__init__(center)
@@ -188,6 +208,26 @@ class Box(Primitive):
         h = ctx.format_number(self.height)
 
         return f"box(p-vec2<f32>({x},{y}),vec2<f32>({w},{h}))"
+
+    def eval_gradient(self, point: Point):
+        raise NotImplementedError()
+
+
+class BoxSharp(Primitive):
+    def __init__(self, center, width, height):
+        super().__init__(center)
+
+        self.width = width
+        self.height = height
+
+    def to_expr(self, ctx: FormatContext):
+
+        x = ctx.format_number(self.center.x)
+        y = ctx.format_number(self.center.y)
+        w = ctx.format_number(self.width)
+        h = ctx.format_number(self.height)
+
+        return f"boxSharp(p-vec2<f32>({x},{y}),vec2<f32>({w},{h}))"
 
     def eval_gradient(self, point: Point):
         raise NotImplementedError()
@@ -298,58 +338,112 @@ def round_intersection(a: SDFNode, b: SDFNode, radius: float) -> SDFNode:
     return Operator("round_intersection", a, b, radius)
 
 
-GRID_SIZE = 16
-BLUE = (36.0, 138.0, 255.0)
-ORANGE = (255.0, 75.0, 0)
-RED = (255.0, 0.0, 0.0)
+class Color:
+    def __init__(self, r, g, b, alpha=255.0, normalize=True):
+        self.r = r
+        self.g = g
+        self.b = b
+        self.a = alpha
+        if normalize:
+            self.normalize()
+
+    def normalize(self):
+        self.r /= 255.0
+        self.g /= 255.0
+        self.b /= 255.0
+        self.a /= 255.0
+
+    def __mul__(self, value):
+
+        return Color(self.r * value, self.g * value, self.b * value, normalize=False)
+
+    def __rmul__(self, value):
+        return Color(value * self.r, value * self.g, value * self.b, normalize=False)
+
+    def __str__(self):
+        return f"rgba({self.r},{self.g},{self.b},{self.a})"
+
+    def format_str(self):
+        return f"{self.r},{self.g},{self.b},{self.a}"
+
+    def format_PIL(self):
+        r = round(self.r * 255)
+        g = round(self.g * 255)
+        b = round(self.b * 255)
+        a = round(self.a * 255)
+
+        return f"rgba({r},{g},{b},{a})"
+
+    def ORANGE():
+        return Color(255.0, 75.0, 0)
+
+    def RED():
+        return Color(255.0, 0.0, 0.0)
+
+    def GREEN():
+        return Color(0.0, 255.0, 0.0)
+
+    def BLUE():
+        return Color(0.0, 0.0, 255.0)
+
+    def WHITE():
+        return Color(255.0, 255.0, 255.0)
+
+    def BLACK():
+        return Color(0.0, 0.0, 0.0)
+
+    def GRAY():
+        return Color(100.0, 100.0, 100.0)
+
+    def TRANSPARENT():
+        return Color(0.0, 0.0, 0.0, alpha=0.0)
+
+
+TILE_SIZE = 16
+BLUEMAIN = Color(36.0, 138.0, 255.0)
+
+DEFAULT_SETTINGS = {
+    "inner_color": BLUEMAIN,
+    "outer_color": Color.TRANSPARENT(),
+    "border_color": Color.BLACK(),
+    "contour_color_inner": BLUEMAIN * 1.25,
+    "contour_color_outer": Color.WHITE(),
+    "contour_spacing": 0.015,
+}
 
 
 class Canvas:
 
     def __init__(self, resolution):
 
-        if resolution % GRID_SIZE != 0:
+        if resolution % TILE_SIZE != 0:
             print("Warning: Resolution has been rounded to the nearest multiple of 16")
 
-        self.resolution = round(resolution / GRID_SIZE) * GRID_SIZE
-        self.inner_color = "1., 1., 1., 1."
-        self.outer_color = ".4, .4, .4, 1."
+        self.resolution = round(resolution / TILE_SIZE) * TILE_SIZE
         self.shader = None
         self.ctx = FormatContext(float_format="explicit_decimal")
+        self.settings = DEFAULT_SETTINGS
+        self.img: Image = None
 
     def init_shader(self, expr):
         if expr is not None:
             template = open("renderer/src/shader_template.wgsl").read()
             shader = template.replace("MAP_FUNCTION", expr)
-            shader = shader.replace("INNER_COLOR", self.inner_color)
-            shader = shader.replace("OUTER_COLOR", self.outer_color)
+
+            for key, value in self.settings.items():
+                if isinstance(value, Color):
+                    shader = shader.replace(f"[[{key}]]", value.format_str())
+                else:
+                    shader = shader.replace(f"[[{key}]]", f"{value}")
+
             self.shader = shader
         else:
             raise Exception("Empty Expression")
 
-    def set_inner_color(self, r, g, b, alpha=1, normalize=False):
-
-        if normalize:
-            self.inner_color = f"{r / 255.},{g / 255.},{b / 255.},{alpha}"
-        else:
-            self.inner_color = f"{r},{g},{b},{1}"
-
-    def set_outer_color(self, r, g, b, alpha=1, normalize=False):
-
-        if normalize:
-            self.outer_color = f"{r / 255.},{g / 255.},{b / 255.},{alpha}"
-        else:
-            self.outer_color = f"{r},{g},{b},{1}"
-
-    def generate_image(self, result, path):
-        import renderer
-        import numpy as np
-        from PIL import Image
+    def generate_image(self, result):
 
         expr = result.to_expr(self.ctx)
 
-        self.set_inner_color(*RED, normalize=True)
-        self.set_outer_color(1.0, 1.0, 1.0)
         self.init_shader(expr)
 
         data = renderer.render_data(self.shader, self.resolution)
@@ -358,8 +452,39 @@ class Canvas:
             (self.resolution, self.resolution, 4)
         )
 
-        # Convert back to PIL image if needed
-        return Image.fromarray(arr, mode="RGBA")
+        start_color = Color.WHITE()
+        start_img = Image.new(
+            "RGBA", (self.resolution, self.resolution), start_color.format_PIL()
+        )
+        gpu_img = Image.fromarray(arr, mode="RGBA")
+
+        self.img = Image.alpha_composite(start_img, gpu_img)
+
+    def overlay_primitive(
+        self, shape: Primitive, color: Color = Color.BLACK(), weight=4
+    ):
+
+        draw = ImageDraw.Draw(self.img)
+        cx = shape.center.x + self.resolution / 2
+        cy = shape.center.y + self.resolution / 2
+        c = color.format_PIL()
+
+        if isinstance(shape, Circle):
+            r = shape.radius * self.resolution
+            draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=c)
+        elif isinstance(shape, Line):
+            xy = [
+                shape.start.x,
+                -shape.start.y,
+                shape.end.x,
+                -shape.end.y,
+            ]
+            xy = [i * self.resolution + self.resolution / 2 for i in xy]
+            print(xy)
+            draw.line(xy, width=weight, fill=c)
+
+        else:
+            raise Exception("Wrong primitive type.")
 
 
 if __name__ == "__main__":
@@ -369,4 +494,4 @@ if __name__ == "__main__":
     c = Circle(Point(0.125, 0.125), 0.125)
     b = Box(Point(0, 0), 0.25, 0.25)
     result = c | b
-    canvas.generate_image(result, "output_image.png")
+    canvas.generate_image(result).show()
