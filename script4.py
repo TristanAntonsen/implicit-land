@@ -24,24 +24,18 @@ c = Circle(p3, 0.027)
 
 sdf = a | b | c
 
-
+# Main SDF
 canvas.draw_sdf(sdf)
 
 rp = Point.random()
-
 n = sdf.eval_gradient_fd(rp)
 
+# annotation layer
 l = Line.from_point_direction(rp, -n, sdf.eval_sdf(rp))
-l1 = Line.from_point_direction(rp, -a.eval_gradient_fd(rp), a.eval_sdf(rp))
-l2 = Line.from_point_direction(rp, -b.eval_gradient_fd(rp), b.eval_sdf(rp))
-l3 = Line.from_point_direction(rp, -c.eval_gradient_fd(rp), c.eval_sdf(rp))
+c1 = Circle(rp, 0.005)
+c2 = Circle(l.end, 0.005)
 
-canvas.overlay_primitive(l)
-canvas.overlay_primitive(l1)
-canvas.overlay_primitive(l2)
-canvas.overlay_primitive(l3)
-canvas.draw_point(l.start)
-canvas.draw_point(l.end)
+canvas.draw_sdf(l | c1 | c2, contours=False, color=Color.GREENMAIN())
 
 canvas.img.save("output_image.png")
 canvas.img.show()

@@ -85,9 +85,9 @@ fn overlay(startColor: vec4<f32>, color: vec4<f32>, d: f32) -> vec4<f32> {
 }
 
 fn contourFac(d: f32, scale: f32, thick: f32) -> f32 {
-    let halfContour = 0.5 * scale;
-    let c = abs(d % scale);
-    return smoothstep(1.0, 0.0, c / thick);
+    let c = abs(d + scale / 2.) % scale;
+    let edge = 0.5 * thick;
+    return smoothstep(edge, 0.0, abs(c - 0.5 * scale));
 }
 
 // Mostly hard coded stuff, will expose more params later
@@ -101,13 +101,13 @@ fn render(uv: vec2<f32>) -> vec4<f32> {
     let outerColor = vec4<f32>([[outer_color]]);
     let innerColor = vec4<f32>([[inner_color]]);
     let border_color = vec4<f32>([[border_color]]);
-    let contour_color_inner = vec4<f32>([[contour_color_inner]]);
-    let contour_color_outer = vec4<f32>([[contour_color_outer]]);
+    var contour_color_inner = vec4<f32>([[contour_color_inner]]);
+    var contour_color_outer = vec4<f32>([[contour_color_outer]]);
     let contour_spacing = [[contour_spacing]];
 
     let aaWidth = 0.001;
     let lineWidth = 0.002;
-
+    let borderWidth = 0.002;
     // Draw base shape
     var fragColor = mix(innerColor, outerColor, smoothstep(-0.5, 0.5, d / aaWidth));
 
@@ -115,11 +115,14 @@ fn render(uv: vec2<f32>) -> vec4<f32> {
     var cfac = contourFac(d, contour_spacing, lineWidth);
     var io = sign(d) * 0.5 + 0.5;
 
+    // contour_color_outer = mix(contour_color_outer, fragColor, smoothstep(0., 1., field / 0.25));
+    // contour_color_inner = mix(contour_color_inner, fragColor, smoothstep(0., 1., field / 0.25));
+
     fragColor = mix(fragColor, contour_color_inner, cfac * (1. - io));
     fragColor = mix(fragColor, contour_color_outer, cfac * io);
 
     // Draw Border
-    fragColor = overlay(fragColor, border_color, (abs(d) - lineWidth / 2.) / aaWidth);
+    fragColor = overlay(fragColor, border_color, (abs(d) - borderWidth / 2.) / aaWidth);
 
     // Clamp to 0-1 for u8
     fragColor = clamp(fragColor, vec4f(0.), vec4f(1.0));

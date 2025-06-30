@@ -29,7 +29,7 @@ for i in range(n - 1):
         br,
     )
 
-img = canvas.generate_image(result, "output_image.png")
+img = canvas.draw_sdf(result)
 img.show()
 
 end = time.time()

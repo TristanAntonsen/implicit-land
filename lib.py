@@ -461,10 +461,10 @@ class Color:
 
     def BLUEMAIN():
         return BLUEMAIN
-    
+
     def GREENMAIN():
         return GREENMAIN
-    
+
     def WHITE():
         return Color(255.0, 255.0, 255.0)
 
@@ -486,9 +486,10 @@ DEFAULT_SETTINGS = {
     "inner_color": BLUEMAIN,
     "outer_color": Color.TRANSPARENT(),
     "border_color": Color.BLACK(),
-    "contour_color_inner": BLUEMAIN * 1.25,
+    "contour_color_inner": Color.BLUEMAIN() * 1.25,
     "contour_color_outer": Color.WHITE(),
     "contour_spacing": 0.015,
+    "contour_fade": 0.5,
     "background_color": Color.WHITE(),
 }
 
@@ -525,7 +526,14 @@ class Canvas:
         else:
             raise Exception("Empty Expression")
 
-    def draw_sdf(self, sdf):
+    def draw_sdf(self, sdf, contours=True, color=None):
+
+        if not contours:
+            self.settings["contour_color_outer"] = Color.TRANSPARENT()
+            self.settings["contour_color_inner"] = Color.TRANSPARENT()
+
+        if color:
+            self.settings["inner_color"] = color
 
         expr = sdf.to_expr(self.ctx)
 
@@ -546,8 +554,13 @@ class Canvas:
         cx = p.x * res + hres
         cy = -p.y * res + hres
         r = weight
-        lw = max(1, round(weight/3))
-        draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=1, width=lw, fill=color.format_PIL())
+        lw = max(1, round(weight / 3))
+        draw.ellipse(
+            [cx - r, cy - r, cx + r, cy + r],
+            outline=1,
+            width=lw,
+            fill=color.format_PIL(),
+        )
 
     def overlay_primitive(
         self, shape: Primitive, color: Color = Color.BLACK(), weight=4
