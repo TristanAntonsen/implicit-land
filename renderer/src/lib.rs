@@ -31,31 +31,33 @@ fn renderer(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 //////// Renderer stuff
-
 use std::fs::File;
 use std::io::BufWriter;
 use wgpu::util::DeviceExt;
-use wgpu::{Adapter, PollType};
+use wgpu::PollType;
 
 const GRID_SIZE: u32 = 16;
 
 pub fn render_rgba_u8(shader: String, resolution: u32) -> Vec<u8> {
-    let rgba_u8_data = pollster::block_on(run(shader, resolution));
+    let renderer = pollster::block_on(Renderer::new());
+    let state1 = renderer.create_compute_state(shader, resolution);
+    let rgba_u8_data = pollster::block_on(renderer.render(&state1));
     rgba_u8_data
 }
 
-pub struct ComputeState {
+pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
-    compute_pipeline: wgpu::ComputePipeline,
-    compute_bind_group: wgpu::BindGroup,
-    resolution: u32,
-    output_texture: wgpu::Texture,
-    _uniform_buf: wgpu::Buffer,
 }
 
-impl ComputeState {
-    async fn new(adapter: Adapter, shader: String, resolution: u32) -> ComputeState {
+impl Renderer {
+    pub async fn new() -> Self {
+        // Set up WGPU (instance, adapter, device, queue)
+        let instance = wgpu::Instance::default();
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .await
+            .unwrap();
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 required_features: wgpu::Features::empty(),
@@ -66,13 +68,20 @@ impl ComputeState {
             })
             .await
             .unwrap();
+        Self { device, queue }
+    }
 
-        let compute_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Compute Shader"),
-            source: wgpu::ShaderSource::Wgsl(shader.into()),
-        });
+    fn create_compute_state(&self, shader: String, resolution: u32) -> ComputeState {
+        // Build pipeline, bind group, texture for a specific shader
 
-        let output_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let compute_shader = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Compute Shader"),
+                source: wgpu::ShaderSource::Wgsl(shader.into()),
+            });
+
+        let output_texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Compute Output Texture"),
             size: wgpu::Extent3d {
                 width: resolution,
@@ -89,63 +98,68 @@ impl ComputeState {
             view_formats: &[],
         });
 
-        let size_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Resolution Buffer"),
-            contents: bytemuck::cast_slice(&[resolution, resolution]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let size_buf = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Resolution Buffer"),
+                contents: bytemuck::cast_slice(&[resolution, resolution]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
 
-        let _uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Uniform Buffer"),
-            contents: bytemuck::cast_slice(&[0, 0, 0, 0]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let _uniform_buf = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Uniform Buffer"),
+                contents: bytemuck::cast_slice(&[0, 0, 0, 0]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
 
         // Create a view for the output texture
         let output_texture_view =
             output_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let compute_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: None,
-                entries: &[
-                    // Output texture (storage)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::StorageTexture {
-                            access: wgpu::StorageTextureAccess::WriteOnly,
-                            format: wgpu::TextureFormat::Rgba32Float,
-                            view_dimension: wgpu::TextureViewDimension::D2,
+            self.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: None,
+                    entries: &[
+                        // Output texture (storage)
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::StorageTexture {
+                                access: wgpu::StorageTextureAccess::WriteOnly,
+                                format: wgpu::TextureFormat::Rgba32Float,
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    },
-                    // Resolution buffer
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+                        // Resolution buffer
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    },
-                    // Time buffer
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+                        // Time buffer
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    },
-                ],
-            });
+                    ],
+                });
 
-        let compute_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let compute_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &compute_bind_group_layout,
             entries: &[
@@ -173,25 +187,26 @@ impl ComputeState {
         });
 
         let compute_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: None,
-                bind_group_layouts: &[&compute_bind_group_layout],
-                push_constant_ranges: &[],
-            });
+            self.device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: None,
+                    bind_group_layouts: &[&compute_bind_group_layout],
+                    push_constant_ranges: &[],
+                });
 
-        let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: None,
-            layout: Some(&compute_pipeline_layout),
-            module: &compute_shader,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let compute_pipeline =
+            self.device
+                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: None,
+                    layout: Some(&compute_pipeline_layout),
+                    module: &compute_shader,
+                    entry_point: Some("main"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                });
 
-        Self {
-            device,
-            queue,
-            compute_pipeline,
+        ComputeState {
+            pipeline: compute_pipeline,
             compute_bind_group,
             resolution,
             output_texture,
@@ -199,9 +214,9 @@ impl ComputeState {
         }
     }
 
-    fn _update(&mut self) -> () {}
+    pub async fn render(&self, state: &ComputeState) -> Vec<u8> {
+        // Execute compute pass and return final image data
 
-    fn render(&mut self) {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -213,11 +228,11 @@ impl ComputeState {
                 label: None,
                 timestamp_writes: None,
             });
-            compute_pass.set_bind_group(0, &self.compute_bind_group, &[]);
-            compute_pass.set_pipeline(&self.compute_pipeline);
+            compute_pass.set_bind_group(0, &state.compute_bind_group, &[]);
+            compute_pass.set_pipeline(&state.pipeline);
 
-            let workgroups_x = self.resolution / GRID_SIZE;
-            let workgroups_y = self.resolution / GRID_SIZE;
+            let workgroups_x = state.resolution / GRID_SIZE;
+            let workgroups_y = state.resolution / GRID_SIZE;
 
             compute_pass.dispatch_workgroups(workgroups_x as u32, workgroups_y as u32, 1);
         }
@@ -226,7 +241,99 @@ impl ComputeState {
 
         // submit will accept anything that implements IntoIter
         self.queue.submit(std::iter::once(encoder.finish()));
+
+        // RUN ADDED HERER
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Copy Command Encoder"),
+            });
+
+        let output_staging_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: (state.resolution as u64
+                * state.resolution as u64
+                * 4
+                * std::mem::size_of::<f32>() as u64),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &state.output_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &output_staging_buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    // This needs to be padded to 256.
+                    bytes_per_row: Some(state.resolution * 16),
+                    rows_per_image: Some(state.resolution),
+                },
+            },
+            wgpu::Extent3d {
+                width: state.resolution,
+                height: state.resolution,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        // Map the buffer to access the data
+        let buffer_slice = output_staging_buffer.slice(..);
+        let (sender, receiver) = oneshot_channel();
+
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            sender.send(result).unwrap();
+        });
+
+        // Block until GPU has finished writing the data
+        self.device.poll(PollType::Wait).expect("GPU Write Error");
+        receiver.receive().await.unwrap().unwrap(); // 1st unwrap: channel result, 2nd: map_async result
+
+        let data = buffer_slice.get_mapped_range().to_vec();
+
+        output_staging_buffer.unmap();
+
+        // Convert RGBA32F → RGBA8
+        let width = state.resolution as usize;
+        let height = state.resolution as usize;
+        let bytes_per_pixel = 16;
+        let padded_bytes_per_row = ((width * bytes_per_pixel + 255) / 256) * 256;
+
+        let mut rgba_u8_data = Vec::with_capacity(width * height * 4);
+        for row in 0..height {
+            let row_start = row * padded_bytes_per_row;
+            let row_data = &data[row_start..row_start + width * bytes_per_pixel];
+
+            for chunk in row_data.chunks_exact(16) {
+                let r = f32::from_ne_bytes(chunk[0..4].try_into().unwrap());
+                let g = f32::from_ne_bytes(chunk[4..8].try_into().unwrap());
+                let b = f32::from_ne_bytes(chunk[8..12].try_into().unwrap());
+                let a = f32::from_ne_bytes(chunk[12..16].try_into().unwrap());
+
+                rgba_u8_data.push((r.clamp(0.0, 1.0) * 255.0).round() as u8);
+                rgba_u8_data.push((g.clamp(0.0, 1.0) * 255.0).round() as u8);
+                rgba_u8_data.push((b.clamp(0.0, 1.0) * 255.0).round() as u8);
+                rgba_u8_data.push((a.clamp(0.0, 1.0) * 255.0).round() as u8);
+            }
+        }
+
+        rgba_u8_data
     }
+}
+
+pub struct ComputeState {
+    pipeline: wgpu::ComputePipeline,
+    compute_bind_group: wgpu::BindGroup,
+    resolution: u32,
+    output_texture: wgpu::Texture,
+    _uniform_buf: wgpu::Buffer,
 }
 
 fn save_rgba8_image(rgba_u8_data: &[u8], resolution: usize, output_file: &str) {
@@ -242,103 +349,4 @@ fn save_rgba8_image(rgba_u8_data: &[u8], resolution: usize, output_file: &str) {
     let mut writer = encoder.write_header().unwrap();
 
     writer.write_image_data(&rgba_u8_data).unwrap();
-}
-
-pub async fn run(shader: String, resolution: u32) -> Vec<u8> {
-    let instance = wgpu::Instance::default();
-
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions::default())
-        .await
-        .unwrap();
-    let mut compute_state = ComputeState::new(adapter, shader, resolution).await;
-    compute_state.render();
-
-    let mut encoder =
-        compute_state
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Copy Command Encoder"),
-            });
-
-    let output_staging_buffer = compute_state.device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size: (compute_state.resolution as u64
-            * compute_state.resolution as u64
-            * 4
-            * std::mem::size_of::<f32>() as u64),
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-
-    encoder.copy_texture_to_buffer(
-        wgpu::TexelCopyTextureInfo {
-            texture: &compute_state.output_texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::TexelCopyBufferInfo {
-            buffer: &output_staging_buffer,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                // This needs to be padded to 256.
-                bytes_per_row: Some(compute_state.resolution * 16),
-                rows_per_image: Some(compute_state.resolution),
-            },
-        },
-        wgpu::Extent3d {
-            width: compute_state.resolution,
-            height: compute_state.resolution,
-            depth_or_array_layers: 1,
-        },
-    );
-    compute_state
-        .queue
-        .submit(std::iter::once(encoder.finish()));
-
-    // Map the buffer to access the data
-    let buffer_slice = output_staging_buffer.slice(..);
-    let (sender, receiver) = oneshot_channel();
-
-    buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-        sender.send(result).unwrap();
-    });
-
-    // Block until GPU has finished writing the data
-    compute_state
-        .device
-        .poll(PollType::Wait)
-        .expect("GPU Write Error");
-    receiver.receive().await.unwrap().unwrap(); // 1st unwrap: channel result, 2nd: map_async result
-
-    let data = buffer_slice.get_mapped_range().to_vec();
-
-    output_staging_buffer.unmap();
-
-    // Convert RGBA32F → RGBA8
-    let width = resolution as usize;
-    let height = resolution as usize;
-    let bytes_per_pixel = 16;
-    let padded_bytes_per_row = ((width * bytes_per_pixel + 255) / 256) * 256;
-
-    let mut rgba_u8_data = Vec::with_capacity(width * height * 4);
-    for row in 0..height {
-        let row_start = row * padded_bytes_per_row;
-        let row_data = &data[row_start..row_start + width * bytes_per_pixel];
-
-        for chunk in row_data.chunks_exact(16) {
-            let r = f32::from_ne_bytes(chunk[0..4].try_into().unwrap());
-            let g = f32::from_ne_bytes(chunk[4..8].try_into().unwrap());
-            let b = f32::from_ne_bytes(chunk[8..12].try_into().unwrap());
-            let a = f32::from_ne_bytes(chunk[12..16].try_into().unwrap());
-
-            rgba_u8_data.push((r.clamp(0.0, 1.0) * 255.0).round() as u8);
-            rgba_u8_data.push((g.clamp(0.0, 1.0) * 255.0).round() as u8);
-            rgba_u8_data.push((b.clamp(0.0, 1.0) * 255.0).round() as u8);
-            rgba_u8_data.push((a.clamp(0.0, 1.0) * 255.0).round() as u8);
-        }
-    }
-
-    rgba_u8_data
 }
