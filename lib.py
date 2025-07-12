@@ -65,15 +65,14 @@ class Vector:
     def dot(self, other):
         return self.x * other.x + self.y * other.y
 
-    def rotated(self, angle):
-        arad = np.radians(angle)
-        ct = np.cos(arad)
-        st = np.sin(arad)
-
-        return Vector(self.x * ct - self.y * st, self.x * st + self.y * ct)
-
     def random():
         return Vector(random() - 0.5, random() - 0.5)
+
+    def max(self, other):
+        return Vector(np.maximum(self.x, other.x), np.maximum(self.y, other.y))
+
+    def min(self, other):
+        return Vector(np.minimum(self.x, other.x), np.minimum(self.y, other.y))
 
 
 class Point(Vector):
@@ -94,6 +93,24 @@ class Point(Vector):
 
     def random():
         return Point(random() - 0.5, random() - 0.5)
+
+    def origin():
+        return Point(0,0)
+    
+    def rotate(self, center, angle: float):
+        angle_rad = np.radians(angle)  # degrees
+        cos_a = np.cos(angle_rad)
+        sin_a = np.sin(angle_rad)
+
+        # Translate to origin
+        dx = self.x - center.x
+        dy = self.y - center.y
+
+        # Rotate and translate back
+        self.x = dx * cos_a - dy * sin_a + center.x
+        self.y = dx * sin_a + dy * cos_a + center.y
+
+        return self
 
 
 class BoundingBox:
@@ -134,6 +151,18 @@ class SDFNode:
         ddx = self.eval_sdf(p + dx) - self.eval_sdf(p - dx)
         ddy = self.eval_sdf(p + dy) - self.eval_sdf(p - dy)
         return Vector(ddx, ddy)
+
+    def projected_point(self, p: Point):
+        n = self.eval_gradient_fd(p)
+        return p - n.normalize() * self.eval_sdf(p)
+
+    def closest_point(self, p: Point, iterations: int = 5):
+
+        cp = p
+        for i in range(iterations):
+            n = self.eval_gradient_fd(cp).normalize()
+            cp -= n * self.eval_sdf(cp)
+        return cp
 
     def __neg__(self):
         return Operator("multiply", self, as_node(-1))
@@ -187,8 +216,9 @@ class Constant(SDFNode):
 
 
 class Primitive(SDFNode):
-    def __init__(self, center: Point):
+    def __init__(self, center: Point, angle=0):
         self.center: Point = center
+        self.rotation: float = 0  # degrees
 
 
 class Circle(Primitive):
@@ -238,8 +268,11 @@ class Box(Primitive):
         y = ctx.format_number(self.center.y)
         w = ctx.format_number(self.width)
         h = ctx.format_number(self.height)
+        a = ctx.format_number(np.radians(self.rotation))
 
-        return f"box(p-vec2<f32>({x},{y}),vec2<f32>({w},{h}))"
+        p = f"rotate(p, {a}, {self.center.wgsl()})"
+
+        return f"box({p}-vec2<f32>({x},{y}),vec2<f32>({w},{h}))"
 
     def eval_gradient(self, point: Point):
         raise NotImplementedError()
@@ -258,6 +291,7 @@ class BoxSharp(Primitive):
 
         self.width = width
         self.height = height
+        self.rotation = 0
 
     def to_expr(self, ctx: FormatContext):
 
@@ -265,8 +299,9 @@ class BoxSharp(Primitive):
         y = ctx.format_number(self.center.y)
         w = ctx.format_number(self.width)
         h = ctx.format_number(self.height)
+        p = f"rotate(p, {np.radians(self.rotation)}, {self.center.wgsl()})"
 
-        return f"boxSharp(p-vec2<f32>({x},{y}),vec2<f32>({w},{h}))"
+        return f"boxSharp({p}-vec2<f32>({x},{y}),vec2<f32>({w},{h}))"
 
     def eval_gradient(self, point: Point):
         raise NotImplementedError()
@@ -319,6 +354,11 @@ class Line(Primitive):
         return Line(point, point + direction.normalize() * length)
 
 
+def round_union_eval(a: float, b: float, r: float):
+    u = Vector(r - a, r - b).max(Vector(0.0, 0.0))
+    return np.maximum(r, np.minimum(a, b)) - u.norm()
+
+
 class Operator(SDFNode):
     def __init__(self, op: str, left: SDFNode, right: SDFNode, param=None):
         self.op = op
@@ -349,7 +389,7 @@ class Operator(SDFNode):
             case "difference":
                 return np.maximum(left_sdf, -right_sdf)
             case "round_union":
-                raise NotImplementedError
+                return round_union_eval(left_sdf, right_sdf, self.param)
             case "round_intersection":
                 raise NotImplementedError
             case "round_difference":
@@ -484,13 +524,14 @@ GREENMAIN = Color(36.0, 255.0, 138.0)
 
 DEFAULT_SETTINGS = {
     "inner_color": BLUEMAIN,
-    "outer_color": Color.TRANSPARENT(),
+    "outer_color": Color.WHITE(),
     "border_color": Color.BLACK(),
     "contour_color_inner": Color.BLUEMAIN() * 1.25,
-    "contour_color_outer": Color.WHITE(),
+    "contour_color_outer": Color.WHITE() * 0.8,
     "contour_spacing": 0.015,
     "contour_fade": 0.5,
     "background_color": Color.WHITE(),
+    "normalize_bool": "true",
 }
 
 
@@ -511,7 +552,7 @@ class Canvas:
             self.settings["background_color"].format_PIL(),
         )
 
-    def init_shader(self, expr):
+    def init_shader(self, expr, debug=False):
         if expr is not None:
             template = open("renderer/src/shader_template.wgsl").read()
             shader = template.replace("MAP_FUNCTION", expr)
@@ -521,8 +562,10 @@ class Canvas:
                     shader = shader.replace(f"[[{key}]]", value.format_str())
                 else:
                     shader = shader.replace(f"[[{key}]]", f"{value}")
-
             self.shader = shader
+
+            if debug:
+                open("shader_debug.wgsl", "w").write(shader)
         else:
             raise Exception("Empty Expression")
 
@@ -537,8 +580,7 @@ class Canvas:
 
         expr = sdf.to_expr(self.ctx)
 
-        self.init_shader(expr)
-
+        self.init_shader(expr, debug=True)
         data = renderer.render_data(self.shader, self.resolution)
 
         arr = np.frombuffer(data, dtype=np.uint8).reshape(
@@ -610,4 +652,6 @@ if __name__ == "__main__":
     c = Circle(Point(0.125, 0.125), 0.125)
     b = Box(Point(0, 0), 0.25, 0.25)
     result = c | b
-    canvas.draw_sdf(result).show()
+    canvas.draw_sdf(result)
+    canvas.img.save("output_image.png")
+    canvas.img.show()
