@@ -2,6 +2,9 @@
 @group(0) @binding(1) var<uniform> resolution: vec2<u32>;
 @group(0) @binding(2) var<uniform> uniforms: vec4<u32>;
 
+const EPSILON = 0.001;
+const NORMALIZE = [[normalize_bool]];
+
 @compute
 @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -73,6 +76,16 @@ fn roundDifference(a: f32, b: f32, r: f32) -> f32 {
 	return roundIntersection(a, -b, r);
 }
 
+fn rotate(p: vec2<f32>, angle: f32, pivot: vec2<f32>) -> vec2<f32> {
+    let s = sin(angle);
+    let c = cos(angle);
+    let d = p - pivot;
+    return vec2<f32>(
+        d.x * c - d.y * s,
+        d.x * s + d.y * c
+    ) + pivot;
+}
+
 fn map(p: vec2<f32>) -> f32 {
 
     let d = MAP_FUNCTION;
@@ -90,12 +103,21 @@ fn contourFac(d: f32, scale: f32, thick: f32) -> f32 {
     return smoothstep(edge, 0.0, abs(c - 0.5 * scale));
 }
 
+fn eval_gradient_fd(p: vec2<f32>) -> vec2<f32> {
+    let dx = vec2<f32>(EPSILON, 0);
+    let dy = vec2<f32>(0, EPSILON);
+    let ddx = map(p + dx) - map(p - dx);
+    let ddy = map(p + dy) - map(p - dy);
+    return vec2<f32>(ddx, ddy);
+}
+
+
 // Mostly hard coded stuff, will expose more params later
 fn render(uv: vec2<f32>) -> vec4<f32> {
     let res = map(uv);
     let d = res;
-
-
+    let grad = eval_gradient_fd(uv);
+    let grad_len = length(grad);
     let field = d;
 
     let outerColor = vec4<f32>([[outer_color]]);
@@ -112,21 +134,28 @@ fn render(uv: vec2<f32>) -> vec4<f32> {
     var fragColor = mix(innerColor, outerColor, smoothstep(-0.5, 0.5, d / aaWidth));
 
     // Draw isolines
-    var cfac = contourFac(d, contour_spacing, lineWidth);
+    var cfac = contourFac(d, contour_spacing, lineWidth );
     var io = sign(d) * 0.5 + 0.5;
-
-    // contour_color_outer = mix(contour_color_outer, fragColor, smoothstep(0., 1., field / 0.25));
-    // contour_color_inner = mix(contour_color_inner, fragColor, smoothstep(0., 1., field / 0.25));
-
     fragColor = mix(fragColor, contour_color_inner, cfac * (1. - io));
     fragColor = mix(fragColor, contour_color_outer, cfac * io);
 
+
     // Draw Border
-    fragColor = overlay(fragColor, border_color, (abs(d) - borderWidth / 2.) / aaWidth);
+    // (Version that corrects border thickness)
+    if (NORMALIZE) {
+        fragColor = overlay(fragColor, border_color, (abs(EPSILON * 2. * d / grad_len) - borderWidth / 2.) / aaWidth);
+    } else {
+        fragColor = overlay(fragColor, border_color, (abs(d) - borderWidth / 2.) / aaWidth);
+    }
 
     // Clamp to 0-1 for u8
     fragColor = clamp(fragColor, vec4f(0.), vec4f(1.0));
-
+    
+    // let lg = length(grad);
+    // var fac = clamp(0.5 * (lg / EPSILON), 0., 1.);
+    // // if (lg <= EPSILON) { fac = 1.0; };
+    // fragColor= vec4f(fac);
+    // fragColor.w = 1.;
     return fragColor;
 }
 
