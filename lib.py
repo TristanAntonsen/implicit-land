@@ -95,8 +95,8 @@ class Point(Vector):
         return Point(random() - 0.5, random() - 0.5)
 
     def origin():
-        return Point(0,0)
-    
+        return Point(0, 0)
+
     def rotate(self, center, angle: float):
         angle_rad = np.radians(angle)  # degrees
         cos_a = np.cos(angle_rad)
@@ -139,11 +139,19 @@ class SDFNode:
     def to_expr(self) -> str:
         raise NotImplementedError()
 
+    def to_dict(self) -> str:
+        raise NotImplementedError()
+
     def bounding_box(self) -> BoundingBox:
         raise NotImplementedError()
 
     def eval_sdf(self, p: Point):
         raise NotImplementedError()
+
+    def write_json(self, path: str):
+        import json
+
+        json.dump(self.to_dict(), open(path, "w"), indent=2)
 
     def eval_gradient_fd(self, p: Point):
         dx = Vector(EPSILON, 0)
@@ -206,6 +214,9 @@ class Field(SDFNode):
     def to_expr(self, ctx: FormatContext):
         return str(self.value)
 
+    def to_dict(self):
+        return {"type": "Field", "value": self.value}
+
 
 class Constant(SDFNode):
     def __init__(self, value: float):
@@ -213,6 +224,9 @@ class Constant(SDFNode):
 
     def to_expr(self, ctx: FormatContext):
         return str(ctx.format_number(self.value))
+
+    def to_dict(self):
+        return {"type": "Constant", "value": self.value}
 
 
 class Primitive(SDFNode):
@@ -241,6 +255,13 @@ class Circle(Primitive):
 
         return f"circle(p,vec2<f32>({x},{y}),{r})"
 
+    def to_dict(self):
+        return {
+            "type": "Circle",
+            "center": str(self.center),
+            "radius": self.radius,
+        }
+
 
 class Plane(Primitive):
     def __init__(self, center, nx, ny):
@@ -251,6 +272,13 @@ class Plane(Primitive):
     def to_expr(self, ctx: FormatContext):
 
         return f"plane(p,{self.center.wgsl()},{self.normal.normalize().wgsl()})"
+
+    def to_dict(self):
+        return {
+            "type": "Plane",
+            "center": str(self.center),
+            "normal": self.normal,
+        }
 
 
 class Box(Primitive):
@@ -273,6 +301,16 @@ class Box(Primitive):
         p = f"rotate(p, {a}, {self.center.wgsl()})"
 
         return f"box({p}-vec2<f32>({x},{y}),vec2<f32>({w},{h}))"
+
+    def to_dict(self):
+        return {
+            "type": "Box",
+            "center": str(self.center),
+            "width": self.width,
+            "height": self.height,
+            "min_point": str((self.min_point.x, self.min_point.y)),
+            "max_point": str((self.max_point.x, self.max_point.y)),
+        }
 
     def eval_gradient(self, point: Point):
         raise NotImplementedError()
@@ -302,6 +340,16 @@ class BoxSharp(Primitive):
         p = f"rotate(p, {np.radians(self.rotation)}, {self.center.wgsl()})"
 
         return f"boxSharp({p}-vec2<f32>({x},{y}),vec2<f32>({w},{h}))"
+
+    def to_dict(self):
+        return {
+            "type": "BoxSharp",
+            "center": str(self.center),
+            "width": self.width,
+            "height": self.height,
+            "min_point": str(self.min_point),
+            "max_point": str(self.max_point),
+        }
 
     def eval_gradient(self, point: Point):
         raise NotImplementedError()
@@ -350,6 +398,14 @@ class Line(Primitive):
 
         return f"line(p,vec2<f32>({sx},{sy}),vec2<f32>({ex},{ey}))"
 
+    def to_dict(self):
+        return {
+            "type": "Line",
+            "center": str(self.center),
+            "start": str(self.start),
+            "end": str(self.end),
+        }
+
     def from_point_direction(point: Point, direction: Vector, length: float):
         return Line(point, point + direction.normalize() * length)
 
@@ -396,6 +452,14 @@ class Operator(SDFNode):
                 raise NotImplementedError
             case _:
                 return None
+
+    def to_dict(self):
+
+        return {
+            "op": self.op,
+            "left": self.left.to_dict(),
+            "right": self.right.to_dict(),
+        }
 
     def to_expr(self, ctx: FormatContext):
 
@@ -569,7 +633,7 @@ class Canvas:
         else:
             raise Exception("Empty Expression")
 
-    def draw_sdf(self, sdf, contours=True, color=None):
+    def draw_sdf(self, sdf: SDFNode, contours=True, color=None):
 
         if not contours:
             self.settings["contour_color_outer"] = Color.TRANSPARENT()
@@ -581,7 +645,7 @@ class Canvas:
         expr = sdf.to_expr(self.ctx)
 
         self.init_shader(expr, debug=True)
-        data = renderer.render_data(self.shader, self.resolution)
+        data = renderer.render_data(self.shader, (self.resolution, self.resolution))
 
         arr = np.frombuffer(data, dtype=np.uint8).reshape(
             (self.resolution, self.resolution, 4)
