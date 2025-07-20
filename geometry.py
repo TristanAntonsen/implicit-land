@@ -98,6 +98,9 @@ class Point(Vector):
     def __str__(self):
         return f"({self.x},{self.y})"
 
+    def __eq__(self, other):
+        return self.x == other.x and self.y == other.y
+
     def min(self, other):
         return
 
@@ -143,6 +146,11 @@ class BoundingBox:
     def __str__(self):
         return f"Min: {self.min_point}, Max: {self.max_point})"
 
+    def __eq__(self, other):
+        if not isinstance(other, BoundingBox):
+            return NotImplemented
+        return self.min_point == other.min_point and self.max_point == other.max_point
+
     def width(self):
         return self.max_point.x - self.min_point.x
 
@@ -167,4 +175,4 @@ class BoundingBox:
         p3 = self.max_point
         p4 = Point(self.center.x - width / 2, self.center.y + height / 2)
 
-        return [p1, p2, p3, p4] 
+        return [p1, p2, p3, p4]
