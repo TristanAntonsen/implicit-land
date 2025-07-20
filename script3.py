@@ -16,6 +16,6 @@ d = -Plane(origin, 0, 1) - 0.25
 
 result = round_intersection(a & c, b & d, 0.)
 
-img = canvas.draw_sdf(result)
-img.save("output_image.png")
-img.show()
+canvas.draw_sdf(result)
+canvas.img.save("output_image.png")
+canvas.img.show()

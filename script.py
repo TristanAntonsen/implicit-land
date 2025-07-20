@@ -27,9 +27,10 @@ result = round_difference(result, c_closest, 0.0075)
 result = result | c1 | c2 | line
 result = result | (b1 | b2) + 0.01
 
-img = canvas.draw_sdf(result)
-img.save("output_image.png")
-img.show()
+canvas.draw_sdf(result)
+canvas.img.save("output_image.png")
+canvas.img.show()
+
 
 end = time.time()
 elapsed = (end - start) * 1000

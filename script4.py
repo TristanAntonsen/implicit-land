@@ -14,26 +14,30 @@ def rc():
 
 # Create a circle and two boxes
 p1 = Point(0.0, 0.0)
-p2 = Point(0.35, 0.35)
-p3 = p2.rotated(15)
+p2 = Point(0.25, 0.25)
 
 a = Circle(p1, 0.18)
-b = Circle(p2, 0.07)
-c = Circle(p3, 0.027)
+b = Circle(p2, 0.13)
 
 
-sdf = a | b | c
+sdf = round_union(a, b, 0.15)
+# sdf = a | b
 
 # Main SDF
 canvas.draw_sdf(sdf)
 
-rp = Point.random()
+# rp = Point.random()
+rp = Point(0.3, 0.0)
 n = sdf.eval_gradient_fd(rp)
 
-# annotation layer
-l = Line.from_point_direction(rp, -n, sdf.eval_sdf(rp))
+# annotation layer (Set background to transparent for overlay)
+canvas.settings["outer_color"] = Color.TRANSPARENT()
+canvas.settings["normalize_bool"] = "false"
+
+cp = sdf.closest_point(rp)
 c1 = Circle(rp, 0.005)
-c2 = Circle(l.end, 0.005)
+c2 = Circle(cp, 0.005)
+l = Line(rp, cp)
 
 canvas.draw_sdf(l | c1 | c2, contours=False, color=Color.GREENMAIN())
 
