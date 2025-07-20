@@ -6,18 +6,20 @@ use pyo3::types::PyBytes;
 
 /// Renders the result from python
 #[pyfunction]
-fn render_png(shader: &str, resolution: usize, output_path: &str) -> PyResult<()> {
-    let rgba_u8_data = render_rgba_u8(shader.to_string(), resolution as u32);
+fn render_png(shader: &str, resolution: (usize, usize), output_path: &str) -> PyResult<()> {
+    let res_u32 = (resolution.0 as u32, resolution.1 as u32);
+    let rgba_u8_data = render_rgba_u8(shader.to_string(), res_u32);
 
-    save_rgba8_image(&rgba_u8_data, resolution, output_path);
+    save_rgba8_image(&rgba_u8_data, resolution.0, output_path);
 
     Ok(())
 }
 
 /// Renders the result from python
 #[pyfunction]
-fn render_data(py: Python<'_>, shader: &str, resolution: usize) -> PyResult<Py<PyBytes>> {
-    let rgba_u8_data = render_rgba_u8(shader.to_string(), resolution as u32);
+fn render_data(py: Python<'_>, shader: &str, resolution: (usize, usize)) -> PyResult<Py<PyBytes>> {
+    let res_u32 = (resolution.0 as u32, resolution.1 as u32);
+    let rgba_u8_data = render_rgba_u8(shader.to_string(), res_u32);
 
     Ok(PyBytes::new(py, &rgba_u8_data).into())
 }
@@ -38,7 +40,7 @@ use wgpu::PollType;
 
 const GRID_SIZE: u32 = 16;
 
-pub fn render_rgba_u8(shader: String, resolution: u32) -> Vec<u8> {
+pub fn render_rgba_u8(shader: String, resolution: (u32, u32)) -> Vec<u8> {
     let renderer = pollster::block_on(Renderer::new());
     let state1 = renderer.create_compute_state(shader, resolution);
     let rgba_u8_data = pollster::block_on(renderer.render(&state1));
@@ -71,7 +73,7 @@ impl Renderer {
         Self { device, queue }
     }
 
-    fn create_compute_state(&self, shader: String, resolution: u32) -> ComputeState {
+    fn create_compute_state(&self, shader: String, resolution: (u32, u32)) -> ComputeState {
         // Build pipeline, bind group, texture for a specific shader
 
         let compute_shader = self
@@ -84,8 +86,8 @@ impl Renderer {
         let output_texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Compute Output Texture"),
             size: wgpu::Extent3d {
-                width: resolution,
-                height: resolution,
+                width: resolution.0,
+                height: resolution.1,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -102,7 +104,7 @@ impl Renderer {
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Resolution Buffer"),
-                contents: bytemuck::cast_slice(&[resolution, resolution]),
+                contents: bytemuck::cast_slice(&[resolution.0, resolution.1]),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
 
@@ -231,8 +233,8 @@ impl Renderer {
             compute_pass.set_bind_group(0, &state.compute_bind_group, &[]);
             compute_pass.set_pipeline(&state.pipeline);
 
-            let workgroups_x = state.resolution / GRID_SIZE;
-            let workgroups_y = state.resolution / GRID_SIZE;
+            let workgroups_x = state.resolution.0 / GRID_SIZE;
+            let workgroups_y = state.resolution.1 / GRID_SIZE;
 
             compute_pass.dispatch_workgroups(workgroups_x as u32, workgroups_y as u32, 1);
         }
@@ -252,8 +254,8 @@ impl Renderer {
 
         let output_staging_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: (state.resolution as u64
-                * state.resolution as u64
+            size: (state.resolution.0 as u64
+                * state.resolution.1 as u64
                 * 4
                 * std::mem::size_of::<f32>() as u64),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
@@ -272,13 +274,13 @@ impl Renderer {
                 layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     // This needs to be padded to 256.
-                    bytes_per_row: Some(state.resolution * 16),
-                    rows_per_image: Some(state.resolution),
+                    bytes_per_row: Some(state.resolution.0 * 16),
+                    rows_per_image: Some(state.resolution.1),
                 },
             },
             wgpu::Extent3d {
-                width: state.resolution,
-                height: state.resolution,
+                width: state.resolution.0,
+                height: state.resolution.1,
                 depth_or_array_layers: 1,
             },
         );
@@ -301,8 +303,8 @@ impl Renderer {
         output_staging_buffer.unmap();
 
         // Convert RGBA32F → RGBA8
-        let width = state.resolution as usize;
-        let height = state.resolution as usize;
+        let width = state.resolution.0 as usize;
+        let height = state.resolution.1 as usize;
         let bytes_per_pixel = 16;
         let padded_bytes_per_row = ((width * bytes_per_pixel + 255) / 256) * 256;
 
@@ -331,7 +333,7 @@ impl Renderer {
 pub struct ComputeState {
     pipeline: wgpu::ComputePipeline,
     compute_bind_group: wgpu::BindGroup,
-    resolution: u32,
+    resolution: (u32, u32),
     output_texture: wgpu::Texture,
     _uniform_buf: wgpu::Buffer,
 }
