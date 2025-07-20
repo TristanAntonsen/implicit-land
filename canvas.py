@@ -17,7 +17,7 @@ DEFAULT_SETTINGS = {
     "contour_spacing": 0.015,
     "contour_fade": 0.5,
     "background_color": Color.WHITE(),
-    "normalize_bool": "true",
+    "normalize_bool": "false",
 }
 
 
@@ -53,12 +53,11 @@ class Canvas:
         else:
             raise Exception("Empty Expression")
 
-    def draw_bounds(self, sdf: SDFNode):
-        null_bbox = BoundingBox.none()
+    def draw_bounds(self, sdf: SDFNode, show_none=False):
+        none_bbox = BoundingBox.none()
         for bs in sdf.compute_all_bounds():
-            if bs == null_bbox:
-                print(bs)
-            self.overlay_primitive(Box.from_bbox(bs))
+            if bs != none_bbox or show_none:
+                self.overlay_primitive(Box.from_bbox(bs))
 
     def draw_sdf(self, sdf: SDFNode, contours=True, color=None):
         if not contours:
