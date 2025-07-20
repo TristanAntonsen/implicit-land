@@ -20,6 +20,10 @@ class FormatContext:
 EPSILON = 0.001
 
 
+def interpolate(a: float, b: float, t: float):
+    return a + (b - a) * t
+
+
 class Vector:
     def __init__(self, x: float, y: float):
         self.x = x
@@ -35,16 +39,32 @@ class Vector:
         return f"vec2<f32>({self.x},{self.y})"
 
     def __add__(self, other):
-        return Vector(self.x + other.x, self.y + other.y)
+        if isinstance(other, Vector):
+            return Vector(self.x + other.x, self.y + other.y)
+        elif isinstance(other, float):
+            return Vector(self.x + other, self.y + other)
+        raise NotImplementedError()
 
     def __radd__(self, other):
-        return Vector(other.x + self.x, other.y + self.y)
+        if isinstance(other, Vector):
+            return Vector(other.x + self.x, other.y + self.y)
+        elif isinstance(other, float):
+            return Vector(other + self.x, other + self.y)
+        raise NotImplementedError()
 
     def __sub__(self, other):
-        return Vector(self.x - other.x, self.y - other.y)
+        if isinstance(other, Vector):
+            return Vector(self.x - other.x, self.y - other.y)
+        elif isinstance(other, float):
+            return Vector(self.x - other, self.y - other)
+        raise NotImplementedError()
 
     def __rsub__(self, other):
-        return Vector(other.x - self.x, other.y - self.y)
+        if isinstance(other, Vector):
+            return Vector(other.x - self.x, other.y - self.y)
+        elif isinstance(other, float):
+            return Vector(other - self.x, other - self.y)
+        return NotImplementedError
 
     def __mul__(self, value):
         return Vector(self.x * value, self.y * value)
@@ -65,6 +85,7 @@ class Vector:
     def dot(self, other):
         return self.x * other.x + self.y * other.y
 
+    @staticmethod
     def random():
         return Vector(random() - 0.5, random() - 0.5)
 
@@ -73,6 +94,19 @@ class Vector:
 
     def min(self, other):
         return Vector(np.minimum(self.x, other.x), np.minimum(self.y, other.y))
+
+    def rotate(self, angle: float):
+        angle_rad = np.radians(angle)
+        cos_a = np.cos(angle_rad)
+        sin_a = np.sin(angle_rad)
+
+        self.x = self.x * cos_a - self.y * sin_a
+        self.y = self.x * sin_a + self.y * cos_a
+
+        return self
+
+    def interpolate(self, other, t: float):
+        return Vector(interpolate(self.x, other.x, t), interpolate(self.y, other.y, t))
 
 
 class Point(Vector):
@@ -91,9 +125,11 @@ class Point(Vector):
     def wgsl(self):
         return f"vec2<f32>({self.x},{self.y})"
 
+    @staticmethod
     def random():
         return Point(random() - 0.5, random() - 0.5)
 
+    @staticmethod
     def origin():
         return Point(0, 0)
 
@@ -112,17 +148,44 @@ class Point(Vector):
 
         return self
 
+    def interpolate(self, other, t):
+        return super().interpolate(other, t)
+
 
 class BoundingBox:
     def __init__(self, min_point: Point, max_point: Point):
         self.min_point = min_point
         self.max_point = max_point
+        self.center = min_point.interpolate(max_point, 0.5)
+
+    def __str__(self):
+        return f"Min: {self.min_point}, Max: {self.max_point})"
+
+    def width(self):
+        return self.max_point.x - self.min_point.x
+
+    def height(self):
+        return self.max_point.y - self.min_point.y
+
+    def none():
+        return BoundingBox(Point(0, 0), Point(0, 0))
 
     def union(a, b):
         return BoundingBox(
             Point(min(a.min_point.x, b.min_point.x), min(a.min_point.y, b.min_point.y)),
             Point(max(a.max_point.x, b.max_point.x), max(a.max_point.y, b.max_point.y)),
         )
+
+    def corners(self):
+        width = self.width()
+        height = self.height()
+
+        p1 = self.min_point
+        p2 = Point(self.center.x + width / 2, self.center.y - height / 2)
+        p3 = self.max_point
+        p4 = Point(self.center.x - width / 2, self.center.y + height / 2)
+
+        return [p1, p2, p3, p4]
 
 
 def as_node(value):
@@ -142,8 +205,11 @@ class SDFNode:
     def to_dict(self) -> str:
         raise NotImplementedError()
 
-    def bounding_box(self) -> BoundingBox:
+    def compute_bounds(self):
         raise NotImplementedError()
+
+    def compute_all_bounds(self):
+        return [self.compute_bounds()]
 
     def eval_sdf(self, p: Point):
         raise NotImplementedError()
@@ -217,6 +283,12 @@ class Field(SDFNode):
     def to_dict(self):
         return {"type": "Field", "value": self.value}
 
+    def compute_bounds(self):
+        return BoundingBox.none()
+
+    def compute_all_bounds(self):
+        return super().compute_all_bounds()
+
 
 class Constant(SDFNode):
     def __init__(self, value: float):
@@ -228,17 +300,38 @@ class Constant(SDFNode):
     def to_dict(self):
         return {"type": "Constant", "value": self.value}
 
+    def compute_bounds(self):
+        return BoundingBox.none()
+
+    def compute_all_bounds(self):
+        return super().compute_all_bounds()
+
 
 class Primitive(SDFNode):
     def __init__(self, center: Point, angle=0):
         self.center: Point = center
         self.rotation: float = 0  # degrees
 
+    def compute_bounds(self):
+        raise NotImplementedError()
+
+    def compute_all_bounds(self):
+        return super().compute_all_bounds()
+
+    def rotate(self, angle):
+        self.rotation = angle
+
 
 class Circle(Primitive):
     def __init__(self, center, radius):
         super().__init__(center)
         self.radius = radius
+
+    def compute_bounds(self):
+        return BoundingBox(self.center - self.radius, self.center + self.radius)
+
+    def compute_all_bounds(self):
+        return super().compute_all_bounds()
 
     def eval_sdf(self, p: Point):
         pt = p - self.center
@@ -269,6 +362,12 @@ class Plane(Primitive):
 
         self.normal: Vector = Vector(nx, ny)
 
+    def compute_bounds(self):
+        return BoundingBox(None, None)
+
+    def compute_all_bounds(self):
+        return super().compute_all_bounds()
+
     def to_expr(self, ctx: FormatContext):
 
         return f"plane(p,{self.center.wgsl()},{self.normal.normalize().wgsl()})"
@@ -287,8 +386,49 @@ class Box(Primitive):
 
         self.width = width
         self.height = height
-        self.min_point = center - Vector(width, height) / 2
-        self.max_point = center + Vector(width, height) / 2
+        self.min_point: Point = Point(center.x - width / 2, center.y - height / 2)
+        self.max_point: Point = Point(center.x + width / 2, center.y + height / 2)
+
+    def corners(self):
+
+        p1 = self.min_point
+        p2 = Point(self.center.x + self.width / 2, self.center.y - self.height / 2)
+        p3 = self.max_point
+        p4 = Point(self.center.x - self.width / 2, self.center.y + self.height / 2)
+
+        return [
+            p1,
+            p2.rotate(self.center, self.rotation),
+            p3,
+            p4.rotate(self.center, self.rotation),
+        ]
+
+    def rotate(self, angle):
+        self.rotation = angle
+        self.min_point.rotate(self.center, angle)
+        self.max_point.rotate(self.center, angle)
+
+    def compute_bounds(self):
+
+        corners = self.corners()
+        min_x = min(p.x for p in corners)
+        max_x = max(p.x for p in corners)
+        min_y = min(p.y for p in corners)
+        max_y = max(p.y for p in corners)
+
+        return BoundingBox(Point(min_x, min_y), Point(max_x, max_y))
+
+    def compute_all_bounds(self):
+        return super().compute_all_bounds()
+
+    def from_bbox(bbox: BoundingBox):
+        center = Point(
+            (bbox.min_point.x + bbox.max_point.x) / 2,
+            (bbox.min_point.y + bbox.max_point.y) / 2,
+        )
+        width = bbox.max_point.x - bbox.min_point.x
+        height = bbox.max_point.y - bbox.min_point.y
+        return Box(center, width, height)
 
     def to_expr(self, ctx: FormatContext):
 
@@ -315,13 +455,6 @@ class Box(Primitive):
     def eval_gradient(self, point: Point):
         raise NotImplementedError()
 
-    def bounding_box(self):
-
-        pmin = self.center - Vector(self.width, self.height) / 2
-        pmax = self.center + Vector(self.width, self.height) / 2
-
-        return BoundingBox(pmin, pmax)
-
 
 class BoxSharp(Primitive):
     def __init__(self, center, width, height):
@@ -330,6 +463,12 @@ class BoxSharp(Primitive):
         self.width = width
         self.height = height
         self.rotation = 0
+
+    def compute_bounds(self):
+        return BoundingBox(self.min_point, self.max_point)
+
+    def compute_all_bounds(self):
+        return super().compute_all_bounds()
 
     def to_expr(self, ctx: FormatContext):
 
@@ -379,6 +518,14 @@ class Line(Primitive):
 
         return sp.dot(self.direction()) / self.length()
 
+    def compute_bounds(self):
+        max_point = Point(max(self.start.x, self.end.x), max(self.start.y, self.end.y))
+        min_point = Point(min(self.start.x, self.end.x), min(self.start.y, self.end.y))
+        return BoundingBox(min_point, max_point)
+
+    def compute_all_bounds(self):
+        return super().compute_all_bounds()
+
     def eval(self, point: Point):
         ab = self.end - self.start
         t = clamp(ab.dot(point - self.start) / ab.dot(ab), 0.0, 1.0)
@@ -410,6 +557,59 @@ class Line(Primitive):
         return Line(point, point + direction.normalize() * length)
 
 
+class Capsule(Primitive):
+    def __init__(self, start: Point, end: Point, width: float):
+        self.start = start
+        self.end = end
+        self.center = (start + end) / 2.0
+        self.width = width
+
+    def direction(self):
+        return (self.end - self.start).normalize()
+
+    def compute_bounds(self):
+        max_point = Point(max(self.start.x, self.end.x), max(self.start.y, self.end.y))
+        min_point = Point(min(self.start.x, self.end.x), min(self.start.y, self.end.y))
+        hw = self.width / 2
+        min_point.x -= hw
+        min_point.y -= hw
+        max_point.x += hw
+        max_point.y += hw
+
+        return BoundingBox(min_point, max_point)
+
+    def compute_all_bounds(self):
+        return super().compute_all_bounds()
+
+    def eval(self, point: Point):
+        ab = self.end - self.start
+        t = clamp(ab.dot(point - self.start) / ab.dot(ab), 0.0, 1.0)
+        return ((ab * t + self.start) - point).norm() - self.width / 2
+
+    def eval_gradient(self, point: Point):
+        t = clamp(self.bary_coords(point), 0, 1)
+        perp_point: Point = self.direction() * t * self.length() + self.start
+        return (point - perp_point).normalize()
+
+    def to_expr(self, ctx: FormatContext):
+
+        sx = ctx.format_number(self.start.x)
+        sy = ctx.format_number(self.start.y)
+        ex = ctx.format_number(self.end.x)
+        ey = ctx.format_number(self.end.y)
+        w = ctx.format_number(self.width)
+        return f"capsule(p,vec2<f32>({sx},{sy}),vec2<f32>({ex},{ey}),{w})"
+
+    def to_dict(self):
+        return {
+            "type": "Capsule",
+            "center": str(self.center),
+            "start": str(self.start),
+            "end": str(self.end),
+            "width": str(self.width),
+        }
+
+
 def round_union_eval(a: float, b: float, r: float):
     u = Vector(r - a, r - b).max(Vector(0.0, 0.0))
     return np.maximum(r, np.minimum(a, b)) - u.norm()
@@ -424,6 +624,20 @@ class Operator(SDFNode):
 
     def eval_gradient_fd(self, p):
         return super().eval_gradient_fd(p)
+
+    def compute_bounds(self):
+        left_bounds: BoundingBox = self.left.compute_bounds()
+        right_bounds: BoundingBox = self.right.compute_bounds()
+        return left_bounds.union(right_bounds)
+
+    def compute_all_bounds(self):
+        all_bounds = []
+
+        all_bounds.extend(self.left.compute_all_bounds())
+        all_bounds.extend(self.right.compute_all_bounds())
+        all_bounds.append(self.compute_bounds())
+
+        return all_bounds
 
     def eval_sdf(self, p: Point):
         left_sdf = self.left.eval_sdf(p)
@@ -564,10 +778,10 @@ class Color:
         return Color(0.0, 0.0, 255.0)
 
     def BLUEMAIN():
-        return BLUEMAIN
+        return Color(36.0, 138.0, 255.0)
 
     def GREENMAIN():
-        return GREENMAIN
+        return Color(36.0, 255.0, 138.0)
 
     def WHITE():
         return Color(255.0, 255.0, 255.0)
@@ -583,11 +797,10 @@ class Color:
 
 
 TILE_SIZE = 16
-BLUEMAIN = Color(36.0, 138.0, 255.0)
-GREENMAIN = Color(36.0, 255.0, 138.0)
+
 
 DEFAULT_SETTINGS = {
-    "inner_color": BLUEMAIN,
+    "inner_color": Color.BLUEMAIN(),
     "outer_color": Color.WHITE(),
     "border_color": Color.BLACK(),
     "contour_color_inner": Color.BLUEMAIN() * 1.25,
@@ -633,6 +846,11 @@ class Canvas:
         else:
             raise Exception("Empty Expression")
 
+    def draw_bounds(self, sdf: SDFNode):
+
+        for bs in sdf.compute_all_bounds():
+            self.overlay_primitive(Box.from_bbox(bs))
+
     def draw_sdf(self, sdf: SDFNode, contours=True, color=None):
 
         if not contours:
@@ -668,41 +886,36 @@ class Canvas:
             fill=color.format_PIL(),
         )
 
-    def overlay_primitive(
-        self, shape: Primitive, color: Color = Color.BLACK(), weight=4
-    ):
+    def overlay_primitive(self, shape: Primitive, color: Color = Color.RED(), weight=4):
 
         draw = ImageDraw.Draw(self.img)
         res = self.resolution
         hres = res / 2
-        cx = shape.center.x + hres
-        cy = shape.center.y + hres
         c = color.format_PIL()
 
+        def to_pil_coords(p: Point):
+            px = p.x * self.resolution + hres
+            py = -p.y * self.resolution + hres
+            return (px, py)
+
         if isinstance(shape, Circle):
+            cx, cy = to_pil_coords(shape.center)
             r = shape.radius * res
-            draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=c)
+            draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=None, outline=c)
 
-        elif isinstance(shape, Line):
-            xy = [
-                shape.start.x,
-                -shape.start.y,
-                shape.end.x,
-                -shape.end.y,
-            ]
-            xy = [i * res + hres for i in xy]
-            draw.line(xy, width=weight, fill=c)
+        elif isinstance(shape, Box) or isinstance(shape, BoxSharp):
 
-        elif isinstance(shape, BoxSharp) or isinstance(shape, Box):
-
-            bbox = shape.bounding_box()
+            minx, miny = to_pil_coords(shape.min_point)
+            maxx, maxy = to_pil_coords(shape.max_point)
             draw.rectangle(
                 [
-                    tuple(bbox.min_point * res + Vector(hres, hres)),
-                    tuple(bbox.max_point * res + Vector(hres, hres)),
+                    # PIL has top left bottom right convention
+                    (minx, maxy),
+                    (maxx, miny),
                 ],
                 width=weight,
-                fill=c,
+                fill=None,
+                outline=c,
             )
 
         else:
