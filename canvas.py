@@ -1,7 +1,7 @@
 import renderer
 import numpy as np
 from PIL import Image, ImageDraw
-from geometry import Point
+from geometry import BoundingBox, Point
 from sdf_core import SDFNode
 from sdf_primitives import Circle, Box, BoxSharp, Primitive
 from utils import Color, FormatContext
@@ -54,7 +54,10 @@ class Canvas:
             raise Exception("Empty Expression")
 
     def draw_bounds(self, sdf: SDFNode):
+        null_bbox = BoundingBox.none()
         for bs in sdf.compute_all_bounds():
+            if bs == null_bbox:
+                print(bs)
             self.overlay_primitive(Box.from_bbox(bs))
 
     def draw_sdf(self, sdf: SDFNode, contours=True, color=None):
@@ -91,7 +94,20 @@ class Canvas:
             fill=color.format_PIL(),
         )
 
-    def overlay_primitive(self, shape: Primitive, color: Color = Color.RED(), weight=4):
+    def draw_text(
+        self, text: str, p: Point, color: Color = Color.BLACK(), size: int = 36
+    ):
+        from PIL import ImageFont
+
+        draw = ImageDraw.Draw(self.img)
+        res = self.resolution
+        hres = res / 2
+        cx = p.x * res + hres
+        cy = -p.y * res + hres
+        font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", size=size)  # macOS
+        draw.text((cx, cy), text, fill=color.format_PIL(), font=font)
+
+    def overlay_primitive(self, shape: Primitive, color: Color = Color.RED(), weight=2):
         draw = ImageDraw.Draw(self.img)
         res = self.resolution
         hres = res / 2
@@ -122,4 +138,4 @@ class Canvas:
             )
 
         else:
-            raise Exception("Wrong primitive type.") 
+            raise Exception("Wrong primitive type.")
