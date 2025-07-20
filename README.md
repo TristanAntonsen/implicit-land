@@ -1,8 +1,9 @@
 # Simple experiment for a little utility to draw diagrams of SDFs
 
-Goal is to draw SDFs easily in python and provide some useful functions such that not everything has to be done in a shader
+A Python experiment for drawing with Signed Distance Fields (SDFs), with GPU-accelerated rendering via Rust and wgpu. Goal is to provide some useful functions such that not everything has to be done in a shader
 
-![image](output_image.png)
+
+![image](output_image_main.png)
 
 ---
 
