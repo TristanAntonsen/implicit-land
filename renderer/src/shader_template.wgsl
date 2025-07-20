@@ -57,6 +57,10 @@ fn line(p: vec2f, a: vec2f, b: vec2f) -> f32 {
 	return length((ab*t + a) - p);
 }
 
+fn capsule(p: vec2f, a: vec2f, b: vec2f, width: f32) -> f32 {
+	return line(p, a, b) - width / 2.;
+}
+
 fn plane(p: vec2f, c: vec2f, n: vec2f) -> f32 {
     return dot((p-c), normalize(n));
 }
