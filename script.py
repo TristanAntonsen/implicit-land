@@ -4,33 +4,31 @@ import time
 start = time.time()
 
 canvas = Canvas(16 * 96)
+canvas.settings["contour_spacing"] = 0.025
 
-# Create a circle and two boxes
-origin = Point(0.0, 0.0)
-circle = Circle(origin, 0.34)
-b1 = Box(origin, 0.2, 0.3)
-b2 = Box(origin, 0.75, 0.1)
+point_1 = Point(-0.075, 0.0)
+body_1 = Circle(point_1, 0.34)
+body_2 = Box(point_1, 0.2, 0.3)
+body_3 = Box(point_1, 0.75, 0.1)
 
-# find the closest point on c and subtract a circle
-p_search = Point(0.2, -0.4)
-closest_point = p_search - circle.eval_gradient(p_search) * circle.eval_sdf(p_search)
-c_closest = Circle(closest_point, 0.02)
+point_2 = Point(0.4, 0.4)
+point_3 = point_2 - body_1.eval_gradient(point_2) * body_1.eval_sdf(point_2)
+body_4 = Circle(point_3, 0.02)
 
-# shapes to draw for search/closest/connector line
-c1 = Circle(closest_point, 0.015)
-c2 = Circle(p_search, 0.05)
-line = Line(p_search, closest_point)
+body_5 = Circle(point_3, 0.015)
+body_6 = Circle(point_2, 0.015)
+body_7 = Line(point_2, point_3)
 
-# final result using booleans
-result = round_difference(circle, b1 | b2, 0.05)
-result = round_difference(result, c_closest, 0.0075)
-result = result | c1 | c2 | line
-result = result | (b1 | b2) + 0.01
+body_8 = round_difference(body_1, body_2 | body_3, 0.05)
+body_9 = round_difference(body_8, body_4, 0.0075)
+body_10 = body_9 | body_5 | body_6
+body_11 = body_10 | ((body_2 | body_3) + 0.01)
+body_12 = body_11 | body_7
 
-canvas.draw_sdf(result)
+canvas.draw_sdf(body_12)
+canvas.draw_bounds(body_12)
 canvas.img.save("output_image.png")
 canvas.img.show()
-
 
 end = time.time()
 elapsed = (end - start) * 1000
