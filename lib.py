@@ -30,11 +30,15 @@ __all__ = [
 
 
 if __name__ == "__main__":
-    canvas = Canvas(16 * 96)
+
+    canvas = Canvas(1024)
+    canvas.settings["contour_spacing"] = 0.05
 
     c = Circle(Point(0.125, 0.125), 0.125)
     b = Box(Point(0, 0), 0.25, 0.25)
     result = c | b
+
     canvas.draw_sdf(result)
-    canvas.img.save("output_image.png")
+    result.write_json("output_tree.json")
+    canvas.img.save("scripts/demo_image.png")
     canvas.img.show()
