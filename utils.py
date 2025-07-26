@@ -1,3 +1,6 @@
+from geometry import Point
+
+
 class FormatContext:
     def __init__(self, language="default", float_format="default"):
         self.language = language
@@ -75,4 +78,18 @@ class Color:
         return Color(100.0, 100.0, 100.0)
 
     def TRANSPARENT():
-        return Color(0.0, 0.0, 0.0, alpha=0.0) 
+        return Color(0.0, 0.0, 0.0, alpha=0.0)
+
+    @staticmethod
+    def random():
+        """Generate a random color with full opacity"""
+        import random
+
+        r = random.uniform(0, 255)
+        g = random.uniform(0, 255)
+        b = random.uniform(0, 255)
+        return Color(r, g, b)
+
+
+def point_centroid(points: list[Point]):
+    return sum(points) / len(points)
