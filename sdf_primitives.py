@@ -1,7 +1,7 @@
 import numpy as np
 from geometry import Point, Vector, BoundingBox
 from sdf_core import Primitive
-from utils import clamp
+from utils import clamp, point_centroid
 
 
 class Circle(Primitive):
@@ -54,7 +54,7 @@ class Plane(Primitive):
         return {
             "type": "Plane",
             "center": str(self.center),
-            "normal": self.normal,
+            "normal": str(self.normal),
         }
 
 
@@ -220,6 +220,40 @@ class Line(Primitive):
         return Line(point, point + direction.normalize() * length)
 
 
+class PolyLine(Primitive):
+    def __init__(self, points: list[Point]):
+        self.start = points[0]
+        self.end = points[-1]
+        self.vertices = points
+        self.center = point_centroid(points)
+
+    def compute_bounds(self):
+        raise NotImplementedError()
+
+    def compute_all_bounds(self):
+        return super().compute_all_bounds()
+
+    def eval(self, point: Point):
+        raise NotImplementedError()
+
+    def eval_gradient(self, point: Point):
+        raise NotImplementedError()
+
+    def to_expr(self, ctx):
+        raise NotImplementedError()
+
+    def to_dict(self):
+        return {
+            "type": "Polyline",
+            "center": str(self.center),
+            "start": str(self.start),
+            "end": str(self.end),
+        }
+
+    def from_point_direction(point: Point, direction: Vector, length: float):
+        return Line(point, point + direction.normalize() * length)
+
+
 class Capsule(Primitive):
     def __init__(self, start: Point, end: Point, width: float):
         self.start = start
@@ -269,4 +303,4 @@ class Capsule(Primitive):
             "start": str(self.start),
             "end": str(self.end),
             "width": str(self.width),
-        } 
+        }
