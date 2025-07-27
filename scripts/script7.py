@@ -1,8 +1,4 @@
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import math
-from lib import *
+from lib.lib import *
 import random
 
 # # Set random seed for reproducible results (optional)

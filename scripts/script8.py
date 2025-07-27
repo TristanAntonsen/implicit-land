@@ -1,41 +1,35 @@
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from lib import *
-import time
-
-start = time.time()
+from lib.lib import *
 
 canvas = Canvas(16 * 96)
 canvas.settings["contour_spacing"] = 0.025
 
+import math
 
-canvas = Canvas(16 * 96)
+# Wing parameters
+root_point = Point(-0.15, 0.35)   # Start point of leading edge (root)
+root_chord = 0.7                  # Chord length at root (distance between leading and trailing edge at root, along y)
+span = 0.7                     # Total span (distance from root to tip, along x)
+sweep_angle = math.radians(0)    # Sweep angle in radians (positive = sweep back)
+taper_ratio = 0.25                 # Ratio of tip chord to root chord
 
-box_center = Point(0.0, 0.0)
-rotated_box = Box(box_center, 0.3, 0.25)
-rotated_box.rotate(30)
+# Calculate tip point for leading edge
+tip_leading_x = root_point.x + span * math.cos(sweep_angle)
+tip_leading_y = root_point.y - span * math.sin(sweep_angle)
+tip_leading = Point(tip_leading_x, tip_leading_y)
 
+# Calculate root and tip points for trailing edge
+root_trailing = Point(root_point.x, root_point.y - root_chord)
+tip_trailing_x = tip_leading_x
+tip_trailing_y = tip_leading_y - root_chord * taper_ratio
+tip_trailing = Point(tip_trailing_x, tip_trailing_y)
 
-left_circle = Circle(Point(-0.25, -0.25), 0.05)
-right_circle = Circle(Point(0.1, -0.25), 0.05)
-le = Line(Point(-0.35, 0.35), Point(0.2, 0.1))
-te = Line(Point(-0.35, -0.35), Point(0.2, -0.1))
+# Create lines for leading and trailing edges
+leading_edge = Line(root_point, tip_leading)
+trailing_edge = Line(root_trailing, tip_trailing)
 
-combined_shape = union(le, te)
+final = union(leading_edge, trailing_edge)
 
-
-# Save the result shape as a JSON file for later use or inspection
-combined_shape.write_json("output_tree.json")
-
-# Draw the signed distance field (SDF) of the result shape onto the canvas
-canvas.draw_sdf(combined_shape)
-
-# Draw the bounding box of the result shape for visualization
-# canvas.draw_bounds(combined_shape)
-
-# Save the rendered image to a PNG file
+final.write_json("output_tree.json")
+canvas.draw_sdf(final)
 canvas.img.save("output_image.png")
-
-# Display the rendered image in a window
 # canvas.img.show()
