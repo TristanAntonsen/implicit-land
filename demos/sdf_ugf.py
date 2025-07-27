@@ -4,8 +4,6 @@ import time
 start = time.time()
 
 canvas = Canvas(16 * 96)
-canvas.settings["contour_spacing"] = 0.05
-canvas.settings["outer_color"] = Color(0, 0, 0, 0)
 
 # Create a circle and two boxes
 origin = Point(0.0, 0.0)
