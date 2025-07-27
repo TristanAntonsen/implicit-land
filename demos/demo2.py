@@ -29,8 +29,8 @@ for i in range(n - 1):
         br,
     )
 
-img = canvas.draw_sdf(result)
-img.show()
+canvas.draw_sdf(result)
+canvas.img.show()
 
 end = time.time()
 elapsed = (end - start) * 1000

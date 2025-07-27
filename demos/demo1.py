@@ -17,16 +17,15 @@ body_4 = Circle(cp, 0.02)
 
 body_5 = Circle(cp, 0.015)
 body_6 = Circle(sp, 0.015)
-body_7 = Line(sp, cp)
 
 body_8 = round_difference(body_1, body_2 | body_3, 0.05)
 body_9 = round_difference(body_8, body_4, 0.0075)
 body_10 = body_9 | body_5 | body_6
 body_11 = body_10 | ((body_2 | body_3) + 0.01)
-body_12 = body_11 | body_7
 
-canvas.draw_sdf(body_12)
-canvas.draw_bounds(body_12)
+canvas.draw_sdf(body_11)
+canvas.overlay_primitive(Line(sp, cp), weight=6)
+canvas.draw_bounds(body_11)
 canvas.img.save("output_image.png")
 canvas.img.show()
 
