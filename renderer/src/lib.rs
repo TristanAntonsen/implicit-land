@@ -8,7 +8,7 @@ use pyo3::types::PyBytes;
 #[pyfunction]
 fn render_png(shader: &str, resolution: (usize, usize), output_path: &str) -> PyResult<()> {
     let res_u32 = (resolution.0 as u32, resolution.1 as u32);
-    let rgba_u8_data = render_rgba_u8(shader.to_string(), res_u32);
+    let rgba_u8_data = render_rgba_u8(&shader.to_string(), res_u32);
 
     save_rgba8_image(&rgba_u8_data, resolution.0, output_path);
 
@@ -19,16 +19,41 @@ fn render_png(shader: &str, resolution: (usize, usize), output_path: &str) -> Py
 #[pyfunction]
 fn render_data(py: Python<'_>, shader: &str, resolution: (usize, usize)) -> PyResult<Py<PyBytes>> {
     let res_u32 = (resolution.0 as u32, resolution.1 as u32);
-    let rgba_u8_data = render_rgba_u8(shader.to_string(), res_u32);
+    let rgba_u8_data = render_rgba_u8(&shader.to_string(), res_u32);
 
     Ok(PyBytes::new(py, &rgba_u8_data).into())
 }
+
+/// Renders a batch of RGBA images using the same shader and resolution, returning a Vec of image data
+#[pyfunction]
+fn render_data_batch(
+    py: Python<'_>,
+    shaders: Vec<String>,
+    resolutions: Vec<(usize, usize)>,
+) -> PyResult<Vec<Py<PyBytes>>> {
+    assert_eq!(shaders.len(), resolutions.len());
+
+    let resolutions_u32: Vec<(u32, u32)> = resolutions
+        .iter()
+        .map(|&(w, h)| (w as u32, h as u32))
+        .collect();
+
+    let rgba_u8_data = render_rgba_u8_batch(&shaders, &resolutions_u32);
+
+    Ok(rgba_u8_data
+        .iter()
+        .map(|data| PyBytes::new(py, &data).into())
+        .collect())
+}
+
+/// LATER: Add a function (and update the rest of the lib) to render a single shader with varying wgpu uniforms
 
 /// A Python module implemented in Rust.cl
 #[pymodule]
 fn renderer(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(render_png, m)?)?;
     m.add_function(wrap_pyfunction!(render_data, m)?)?;
+    m.add_function(wrap_pyfunction!(render_data_batch, m)?)?;
     Ok(())
 }
 
@@ -40,11 +65,33 @@ use wgpu::PollType;
 
 const GRID_SIZE: u32 = 16;
 
-pub fn render_rgba_u8(shader: String, resolution: (u32, u32)) -> Vec<u8> {
+// Renders a single RGBA image from a WGSL shader string and resolution, returning the image data as a Vec<u8>
+pub fn render_rgba_u8(shader: &String, resolution: (u32, u32)) -> Vec<u8> {
     let renderer = pollster::block_on(Renderer::new());
     let state1 = renderer.create_compute_state(shader, resolution);
     let rgba_u8_data = pollster::block_on(renderer.render(&state1));
     rgba_u8_data
+}
+
+// Renders a batch of RGBA images using the same shader and resolution, returning a Vec of image data
+pub fn render_rgba_u8_batch(shaders: &Vec<String>, resolutions: &Vec<(u32, u32)>) -> Vec<Vec<u8>> {
+    let renderer = pollster::block_on(Renderer::new());
+
+    // check that the number of shaders and resolutions are the same
+    assert_eq!(shaders.len(), resolutions.len());
+
+    let states = shaders
+        .iter()
+        .zip(resolutions.iter())
+        .map(|(shader, resolution)| renderer.create_compute_state(shader, *resolution))
+        .collect::<Vec<_>>();
+
+    let rgba_u8_data = states
+        .iter()
+        .map(|state| pollster::block_on(renderer.render(state)))
+        .collect::<Vec<_>>();
+
+    return rgba_u8_data;
 }
 
 pub struct Renderer {
@@ -73,7 +120,7 @@ impl Renderer {
         Self { device, queue }
     }
 
-    fn create_compute_state(&self, shader: String, resolution: (u32, u32)) -> ComputeState {
+    fn create_compute_state(&self, shader: &String, resolution: (u32, u32)) -> ComputeState {
         // Build pipeline, bind group, texture for a specific shader
 
         let compute_shader = self
