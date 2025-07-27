@@ -45,4 +45,4 @@ canvas.draw_bounds(combined_shape)
 canvas.img.save("output_image.png")
 
 # Display the rendered image
-canvas.img.show()
+# canvas.img.show()

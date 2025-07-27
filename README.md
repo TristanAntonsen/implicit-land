@@ -2,16 +2,17 @@
 
 A Python experiment for generating diagrams using Signed Distance Fields (SDFs) with GPU-accelerated rendering via Rust and wgpu. The goal is to provide useful functions so that not everything has to be done in a shader.
 
+
 *Note: This is a WIP. Some functions might not be fully implemented yet.*
 
 ![image](img/output_image_main.png)
 
 ---
 ### Requirements (the interesting ones):
-- Rust
-- Python
-- wgpu
-- Maturin (pyo3) for Python <> Rust bindings
+- [Rust](https://www.rust-lang.org/)
+- [Python](https://www.python.org/)
+- [wgpu](https://github.com/gfx-rs/wgpu)
+- [Maturin (pyo3)](https://github.com/PyO3/maturin) for Python <> Rust bindings
 
 *not tested with different python/rust/wgpu versions or different machines yet. This was python 3.12 on an M3 Pro MacBook Pro*
 
@@ -21,13 +22,13 @@ A Python experiment for generating diagrams using Signed Distance Fields (SDFs) 
 From `/renderer`:
 
 ```
-maturin develop
+maturin develop --release
 ```
 
-To run:
+To run (from root):
 
 ```
-python scripts/script.py
+python -m demos.demo1
 ```
 
 Sample shape:
@@ -79,7 +80,7 @@ You'll notice that there's some low level stuff like `max()` and some higher lev
 
 Why GPU, not CPU?
 - It was easier to get really fast performance on the GPU rather than coming up with a more advanced CPU evaluator (see the link below).
-- The wgpu setup is super fast. Time to generate the main image, including GPU setup, is around 75ms on my Macbook. Writing the .png takes another ~300ms.
+- The wgpu setup is super fast. Time to generate the main image, including GPU setup, is around 75ms on my Macbook. Writing the .png takes another ~300ms. I also plan on using this to create image sequences, which would allow reuse of the initial GPU setup.
 - I might extend this to create 3D rendering or support some marching cubes meshing. Having the gpu ready will help there. This is also why I used a compute shader rather than a fragment shader.
 - I like wgpu and wanted to play with it more
 
@@ -108,3 +109,5 @@ Finally, there's also a .json debug output function available on any `SDF` class
   }
 }
 ```
+---
+*I also tried using [Cursor](https://www.cursor.com) a bit for this project. I defined all the base functionality, then used Cursor to help me reorganize it into a module (change folder structure, manage relative imports, etc. Pretty interesting.)*
